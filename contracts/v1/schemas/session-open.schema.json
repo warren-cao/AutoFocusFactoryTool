@@ -1,0 +1,40 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://focusir.local/contracts/v1/session-open.schema.json",
+  "title": "工厂工作台会话握手参数",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "client_id",
+    "client_name",
+    "client_version",
+    "supported_versions",
+    "workbench_tag"
+  ],
+  "properties": {
+    "client_id": {
+      "type": "string",
+      "format": "uuid"
+    },
+    "client_name": {
+      "type": "string",
+      "maxLength": 64
+    },
+    "client_version": {
+      "type": "string",
+      "maxLength": 32
+    },
+    "supported_versions": {
+      "type": "array",
+      "items": {
+        "type": "integer"
+      },
+      "contains": {
+        "const": 1
+      }
+    },
+    "workbench_tag": {
+      "const": "FOCUSIR_FACTORY_WORKBENCH_V1"
+    }
+  }
+}

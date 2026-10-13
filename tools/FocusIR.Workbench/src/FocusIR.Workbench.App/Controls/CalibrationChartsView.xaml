@@ -1,0 +1,43 @@
+<UserControl x:Class="FocusIR.Workbench.App.Controls.CalibrationChartsView"
+ xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+ xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml" xmlns:local="clr-namespace:FocusIR.Workbench.App.Controls">
+ <Grid>
+  <Grid.RowDefinitions><RowDefinition Height="Auto"/><RowDefinition Height="Auto"/><RowDefinition Height="*"/></Grid.RowDefinitions>
+  <TextBlock Text="{Binding Status}" TextWrapping="Wrap" Margin="0,4,0,8" Foreground="#455A68"/>
+  <DockPanel Grid.Row="1" Margin="0,0,0,8">
+   <Button DockPanel.Dock="Right" Content="导出 CSV" Click="Export_Click" IsEnabled="{Binding CanExportRecords}" Margin="8,0,0,0"/>
+   <CheckBox DockPanel.Dock="Right" Content="跟随当前节点" IsChecked="{Binding FollowLive}" VerticalAlignment="Center" Margin="8,0"/>
+   <ComboBox ItemsSource="{Binding NodeChoices}" SelectedItem="{Binding SelectedNode}" DisplayMemberPath="Label" MinWidth="150"/>
+  </DockPanel>
+  <TabControl Grid.Row="2" SelectedIndex="{Binding SelectedPlotIndex}">
+   <TabItem Header="FOCUS—清晰度"><local:CalibrationPlot Points="{Binding FocusPoints}" AxisLabels="FOCUS 实际位置 raw → 清晰度评分" MinHeight="180"/></TabItem>
+   <TabItem Header="双向模型">
+    <Grid><Grid.RowDefinitions><RowDefinition Height="Auto"/><RowDefinition Height="Auto"/><RowDefinition Height="*"/></Grid.RowDefinitions>
+     <WrapPanel Margin="0,4,0,4">
+      <Button Content="{Binding CurveEditButtonText}" Click="EditCurve_Click" IsEnabled="{Binding CanToggleCurveEdit}"/>
+      <Button Content="保存并应用到设备" Click="SaveCurve_Click" IsEnabled="{Binding CanSaveCurve}" Margin="8,0,0,0"/>
+     </WrapPanel>
+     <TextBlock Grid.Row="1" Text="{Binding CurveEditNotice}" TextWrapping="Wrap" Foreground="#647582" Margin="0,0,0,4"/>
+     <local:CalibrationPlot x:Name="ModelPlot" Grid.Row="2" Points="{Binding ModelPoints}" EditNodesEnabled="{Binding CanDragCurveNodes}" AxisLabels="ZOOM raw → FOCUS raw（PCHIP）" MinHeight="180"/>
+    </Grid>
+   </TabItem>
+   <TabItem Header="曲线轻量检查" Visibility="{Binding ValidationVisibility}">
+    <Grid><Grid.RowDefinitions><RowDefinition Height="Auto"/><RowDefinition Height="*"/><RowDefinition Height="*"/></Grid.RowDefinitions>
+     <TextBlock Text="此页显示最近一次重新复验的结果：各位置评分比例需≥0.95。切换页签不会执行复验。" TextWrapping="Wrap" Foreground="#647582" Margin="0,4,0,4"/>
+     <local:CalibrationPlot Grid.Row="1" Points="{Binding ErrorPoints}" AxisLabels="ZOOM raw → 预测误差 / 允许误差 raw" MinHeight="150"/>
+     <local:CalibrationPlot Grid.Row="2" Points="{Binding RatioPoints}" AxisLabels="ZOOM raw → 预测评分 / 参考峰值（要求 ≥ 0.95）" MinHeight="150"/>
+    </Grid>
+   </TabItem>
+   <TabItem Header="无效点">
+    <DataGrid ItemsSource="{Binding InvalidSamples}" AutoGenerateColumns="False" IsReadOnly="True" CanUserAddRows="False" EnableRowVirtualization="True">
+     <DataGrid.Columns>
+      <DataGridTextColumn Header="帧号" Binding="{Binding FrameId}"/>
+      <DataGridTextColumn Header="FOCUS raw" Binding="{Binding Focus}"/>
+      <DataGridTextColumn Header="阶段" Binding="{Binding Stage}"/>
+      <DataGridTextColumn Header="无效原因" Binding="{Binding InvalidReason}" Width="*"/>
+     </DataGrid.Columns>
+    </DataGrid>
+   </TabItem>
+  </TabControl>
+ </Grid>
+</UserControl>

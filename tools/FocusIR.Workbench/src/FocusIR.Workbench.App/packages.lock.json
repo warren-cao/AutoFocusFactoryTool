@@ -1,0 +1,27 @@
+{
+  "version": 1,
+  "dependencies": {
+    "net10.0-windows7.0": {
+      "focusir.workbench.application": {
+        "type": "Project",
+        "dependencies": {
+          "FocusIR.Workbench.Domain": "[1.0.0, )"
+        }
+      },
+      "focusir.workbench.domain": {
+        "type": "Project"
+      },
+      "focusir.workbench.infrastructure": {
+        "type": "Project",
+        "dependencies": {
+          "FocusIR.Workbench.Application": "[1.0.0, )",
+          "FocusIR.Workbench.Domain": "[1.0.0, )",
+          "FocusIR.Workbench.Protocol": "[1.0.0, )"
+        }
+      },
+      "focusir.workbench.protocol": {
+        "type": "Project"
+      }
+    }
+  }
+}

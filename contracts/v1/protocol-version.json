@@ -1,0 +1,25 @@
+{
+  "protocol": "focusir",
+  "version": 1,
+  "framing": {
+    "length_bytes": 4,
+    "length_encoding": "uint32-big-endian",
+    "length_includes_header": false,
+    "body_encoding": "utf-8",
+    "body_must_be_object": true,
+    "maximum_body_bytes": 262144,
+    "maximum_json_depth": 16,
+    "maximum_send_queue_bytes_per_connection": 1048576,
+    "maximum_authenticated_connections": 4,
+    "frame_read_timeout_ms": 5000
+  },
+  "numeric_conventions": {
+    "positions": "signed int32 raw device units",
+    "uint64_values": "base-10 JSON strings",
+    "distance": "metres",
+    "temperature": "degrees Celsius when converted; otherwise raw value and unit",
+    "durations": "milliseconds"
+  },
+  "request_timeout_policy": "A socket timeout leaves a mutating request outcome unknown. Query request.get_status using the original request_id; never create a new motion request as an automatic retry.",
+  "data_source_policy": "Only data explicitly marked device may be presented as a real device reading. Simulator values must carry data_source=simulator and remain excluded from acceptance reports."
+}

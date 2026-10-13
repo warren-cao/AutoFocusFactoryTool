@@ -1,0 +1,48 @@
+Microsoft Visual Studio Solution File, Format Version 12.00
+# Visual Studio Version 17
+VisualStudioVersion = 17.0.31903.59
+MinimumVisualStudioVersion = 10.0.40219.1
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "FocusIR.Workbench.Domain", "tools\FocusIR.Workbench\src\FocusIR.Workbench.Domain\FocusIR.Workbench.Domain.csproj", "{E92AB107-F222-4594-9F91-55BBEC398F2B}"
+EndProject
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "FocusIR.Workbench.Protocol", "tools\FocusIR.Workbench\src\FocusIR.Workbench.Protocol\FocusIR.Workbench.Protocol.csproj", "{D7CEEE48-BEA8-4858-B9A8-BE474D492BA1}"
+EndProject
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "FocusIR.Workbench.Application", "tools\FocusIR.Workbench\src\FocusIR.Workbench.Application\FocusIR.Workbench.Application.csproj", "{2DBE3963-215A-4F84-BD54-C7B8838244AF}"
+EndProject
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "FocusIR.Workbench.Infrastructure", "tools\FocusIR.Workbench\src\FocusIR.Workbench.Infrastructure\FocusIR.Workbench.Infrastructure.csproj", "{5B93C197-AC8D-4B03-8618-AC3D4AE3C579}"
+EndProject
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "FocusIR.Workbench.App", "tools\FocusIR.Workbench\src\FocusIR.Workbench.App\FocusIR.Workbench.App.csproj", "{BF5E48C4-A542-428C-8C50-1CB2A2174E6C}"
+EndProject
+Global
+	GlobalSection(SolutionConfigurationPlatforms) = preSolution
+		Debug|Any CPU = Debug|Any CPU
+		Release|Any CPU = Release|Any CPU
+	EndGlobalSection
+	GlobalSection(ProjectConfigurationPlatforms) = postSolution
+		{E92AB107-F222-4594-9F91-55BBEC398F2B}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
+		{E92AB107-F222-4594-9F91-55BBEC398F2B}.Debug|Any CPU.Build.0 = Debug|Any CPU
+		{E92AB107-F222-4594-9F91-55BBEC398F2B}.Release|Any CPU.ActiveCfg = Release|Any CPU
+		{E92AB107-F222-4594-9F91-55BBEC398F2B}.Release|Any CPU.Build.0 = Release|Any CPU
+		{D7CEEE48-BEA8-4858-B9A8-BE474D492BA1}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
+		{D7CEEE48-BEA8-4858-B9A8-BE474D492BA1}.Debug|Any CPU.Build.0 = Debug|Any CPU
+		{D7CEEE48-BEA8-4858-B9A8-BE474D492BA1}.Release|Any CPU.ActiveCfg = Release|Any CPU
+		{D7CEEE48-BEA8-4858-B9A8-BE474D492BA1}.Release|Any CPU.Build.0 = Release|Any CPU
+		{2DBE3963-215A-4F84-BD54-C7B8838244AF}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
+		{2DBE3963-215A-4F84-BD54-C7B8838244AF}.Debug|Any CPU.Build.0 = Debug|Any CPU
+		{2DBE3963-215A-4F84-BD54-C7B8838244AF}.Release|Any CPU.ActiveCfg = Release|Any CPU
+		{2DBE3963-215A-4F84-BD54-C7B8838244AF}.Release|Any CPU.Build.0 = Release|Any CPU
+		{5B93C197-AC8D-4B03-8618-AC3D4AE3C579}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
+		{5B93C197-AC8D-4B03-8618-AC3D4AE3C579}.Debug|Any CPU.Build.0 = Debug|Any CPU
+		{5B93C197-AC8D-4B03-8618-AC3D4AE3C579}.Release|Any CPU.ActiveCfg = Release|Any CPU
+		{5B93C197-AC8D-4B03-8618-AC3D4AE3C579}.Release|Any CPU.Build.0 = Release|Any CPU
+		{BF5E48C4-A542-428C-8C50-1CB2A2174E6C}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
+		{BF5E48C4-A542-428C-8C50-1CB2A2174E6C}.Debug|Any CPU.Build.0 = Debug|Any CPU
+		{BF5E48C4-A542-428C-8C50-1CB2A2174E6C}.Release|Any CPU.ActiveCfg = Release|Any CPU
+		{BF5E48C4-A542-428C-8C50-1CB2A2174E6C}.Release|Any CPU.Build.0 = Release|Any CPU
+	EndGlobalSection
+	GlobalSection(SolutionProperties) = preSolution
+		HideSolutionNode = FALSE
+	EndGlobalSection
+	GlobalSection(ExtensibilityGlobals) = postSolution
+		SolutionGuid = {094B2024-DE27-407C-B7B6-66691D51815C}
+	EndGlobalSection
+EndGlobal

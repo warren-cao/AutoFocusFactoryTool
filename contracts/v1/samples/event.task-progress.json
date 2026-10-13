@@ -1,0 +1,17 @@
+{
+  "protocol": "focusir",
+  "version": 1,
+  "kind": "event",
+  "boot_id": "44444444-4444-4444-8444-444444444444",
+  "event_seq": "108",
+  "server_mono_ms": "127240",
+  "topic": "task.progress",
+  "task_id": "55555555-5555-4555-8555-555555555555",
+  "data": {
+    "state": "RUNNING",
+    "phase": "BRACKET_PEAK",
+    "completed_nodes": 2,
+    "planned_nodes": 9,
+    "progress_percent": null
+  }
+}

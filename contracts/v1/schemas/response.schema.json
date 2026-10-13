@@ -1,0 +1,38 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://focusir.local/contracts/v1/response.schema.json",
+  "title": "focusIR v1 response envelope",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["protocol", "version", "kind", "request_id", "status", "boot_id", "server_mono_ms"],
+  "oneOf": [
+    { "properties": { "status": { "enum": ["ok", "accepted"] }, "result": { "type": "object" } }, "required": ["result"], "not": { "required": ["error"] } },
+    { "properties": { "status": { "const": "error" }, "error": { "$ref": "#/$defs/error" } }, "required": ["error"], "not": { "required": ["result"] } }
+  ],
+  "properties": {
+    "protocol": { "const": "focusir" },
+    "version": { "const": 1 },
+    "kind": { "const": "response" },
+    "request_id": { "type": "string", "format": "uuid" },
+    "status": { "enum": ["ok", "accepted", "error"] },
+    "boot_id": { "type": "string", "format": "uuid" },
+    "server_mono_ms": { "$ref": "#/$defs/uint64String" },
+    "result": { "type": "object" },
+    "error": { "$ref": "#/$defs/error" }
+  },
+  "$defs": {
+    "uint64String": { "type": "string", "pattern": "^(0|[1-9][0-9]{0,19})$", "maxLength": 20 },
+    "error": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["code", "message", "retryable"],
+      "properties": {
+        "code": { "type": "string", "minLength": 1 },
+        "message": { "type": "string" },
+        "retryable": { "type": "boolean" },
+        "field": { "type": ["string", "null"] },
+        "details": { "type": ["object", "null"] }
+      }
+    }
+  }
+}

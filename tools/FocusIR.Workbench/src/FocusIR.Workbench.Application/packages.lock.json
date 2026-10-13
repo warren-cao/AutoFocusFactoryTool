@@ -1,0 +1,10 @@
+{
+  "version": 1,
+  "dependencies": {
+    "net10.0": {
+      "focusir.workbench.domain": {
+        "type": "Project"
+      }
+    }
+  }
+}

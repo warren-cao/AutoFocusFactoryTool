@@ -1,0 +1,150 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://focusir.local/contracts/v1/profiles.schema.json",
+  "title": "镜头型号及物距配置管理参数",
+  "$defs": {
+    "list": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "lens_model": {
+          "$ref": "#/$defs/lensModel"
+        }
+      },
+      "required": [
+        "lens_model"
+      ]
+    },
+    "get": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "lens_model",
+        "profile_id"
+      ],
+      "properties": {
+        "profile_id": {
+          "type": "string",
+          "pattern": "^[a-z0-9-]+$",
+          "maxLength": 63
+        },
+        "lens_model": {
+          "$ref": "#/$defs/lensModel"
+        }
+      }
+    },
+    "activateOrVerify": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "lens_model",
+        "profile_id"
+      ],
+      "properties": {
+        "profile_id": {
+          "type": "string",
+          "pattern": "^[a-z0-9-]+$",
+          "maxLength": 63
+        },
+        "budget_ms": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 1800000,
+          "default": 900000
+        },
+        "lens_model": {
+          "$ref": "#/$defs/lensModel"
+        }
+      }
+    },
+    "lensModel": {
+      "type": "string",
+      "minLength": 1,
+      "description": "镜头目录名，UTF-8少于128字节；禁用路径分隔符、控制字符、. 和 ..。 禁止与根目录保留配置文件或记录目录重名。",
+      "not": {
+        "enum": [
+          "active.json",
+          "device.json",
+          "dcAfSocket.json",
+          "dcAfTracking.json",
+          "dcAfFactoryMode",
+          "dcAfCalibration"
+        ]
+      },
+      "maxLength": 127
+    },
+    "lensList": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {}
+    },
+    "lensCreate": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "lens_model"
+      ],
+      "properties": {
+        "lens_model": {
+          "$ref": "#/$defs/lensModel"
+        }
+      }
+    },
+    "updateNodes": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "lens_model",
+        "profile_id",
+        "expected_model_id",
+        "nodes"
+      ],
+      "properties": {
+        "lens_model": {
+          "$ref": "#/$defs/lensModel"
+        },
+        "profile_id": {
+          "type": "string",
+          "pattern": "^[a-z0-9-]+$",
+          "maxLength": 63
+        },
+        "expected_model_id": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 63
+        },
+        "nodes": {
+          "type": "array",
+          "minItems": 2,
+          "maxItems": 128,
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": [
+              "node_id",
+              "focus_position"
+            ],
+            "properties": {
+              "node_id": {
+                "type": "string",
+                "pattern": "^[0-9]+$"
+              },
+              "focus_position": {
+                "type": "integer",
+                "minimum": -2147483648,
+                "maximum": 2147483647
+              }
+            }
+          },
+          "description": "必须提交当前模型全部节点；ID和数量匹配，FOCUS在设备模型行程内。ZOOM不允许改动。"
+        },
+        "budget_ms": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 1800000,
+          "default": 30000
+        }
+      }
+    }
+  }
+}

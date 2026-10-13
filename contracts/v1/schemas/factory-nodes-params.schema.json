@@ -1,0 +1,26 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "focusIR factory paging parameters",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "task_id"
+  ],
+  "properties": {
+    "task_id": {
+      "type": "string",
+      "pattern": "^[0-9]+$"
+    },
+    "cursor": {
+      "type": "string",
+      "pattern": "^[0-9]+$",
+      "default": "0"
+    },
+    "limit": {
+      "type": "integer",
+      "minimum": 1,
+      "maximum": 100,
+      "default": 100
+    }
+  }
+}

@@ -1,0 +1,23 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://focusir.local/contracts/v1/request.schema.json",
+  "title": "focusIR v1 request envelope",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["protocol", "version", "kind", "request_id", "method", "params"],
+  "properties": {
+    "protocol": { "const": "focusir" },
+    "version": { "const": 1 },
+    "kind": { "const": "request" },
+    "request_id": { "$ref": "#/$defs/uuid" },
+    "session_id": { "$ref": "#/$defs/uuid" },
+    "method": { "type": "string", "minLength": 1, "maxLength": 96 },
+    "lease_id": { "$ref": "#/$defs/uuid" },
+    "control_epoch": { "$ref": "#/$defs/uint64String" },
+    "params": { "type": "object", "additionalProperties": true }
+  },
+  "$defs": {
+    "uuid": { "type": "string", "format": "uuid" },
+    "uint64String": { "type": "string", "pattern": "^(0|[1-9][0-9]{0,19})$", "maxLength": 20 }
+  }
+}

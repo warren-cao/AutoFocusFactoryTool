@@ -1,0 +1,76 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://focusir.local/contracts/v1/tracking.schema.json",
+  "title": "设备本地联动参数",
+  "$defs": {
+    "get": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {},
+      "required": []
+    },
+    "set": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "enabled": {
+          "type": "boolean"
+        },
+        "expected_revision": {
+          "type": "string",
+          "pattern": "^(0|[1-9][0-9]{0,19})$",
+          "maxLength": 20
+        }
+      },
+      "required": [
+        "enabled",
+        "expected_revision"
+      ]
+    },
+    "move": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "zoom_position": {
+          "type": "integer",
+          "minimum": -2147483648,
+          "maximum": 2147483647
+        },
+        "budget_ms": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 1800000
+        }
+      },
+      "required": [
+        "zoom_position"
+      ]
+    },
+    "verify": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "budget_ms": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 1800000
+        }
+      },
+      "required": []
+    },
+    "stop": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "task_id": {
+          "type": "string",
+          "pattern": "^(0|[1-9][0-9]{0,19})$",
+          "maxLength": 20
+        }
+      },
+      "required": [
+        "task_id"
+      ]
+    }
+  }
+}

@@ -1,0 +1,10 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <TargetFramework>net10.0</TargetFramework>
+  </PropertyGroup>
+  <ItemGroup>
+    <ProjectReference Include="..\FocusIR.Workbench.Domain\FocusIR.Workbench.Domain.csproj" />
+    <ProjectReference Include="..\FocusIR.Workbench.Protocol\FocusIR.Workbench.Protocol.csproj" />
+    <ProjectReference Include="..\FocusIR.Workbench.Application\FocusIR.Workbench.Application.csproj" />
+  </ItemGroup>
+</Project>

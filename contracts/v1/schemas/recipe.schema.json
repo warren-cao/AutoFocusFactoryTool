@@ -1,0 +1,224 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://focusir.local/contracts/v1/recipe.schema.json",
+  "title": "focusIR v1 type_reference factory recipe",
+  "description": "单物距配方。镜头型号由镜头配置选择，固件和清晰度指标版本由设备配置注入并参与有效配方哈希；上位机不提交镜头序列号、板卡、流水线或版本字段。跨字段大小和网格由设备验证。",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema_version",
+    "recipe_id",
+    "kind",
+    "lens_model",
+    "distance_layers"
+  ],
+  "properties": {
+    "schema_version": {
+      "const": 1
+    },
+    "recipe_id": {
+      "type": "string",
+      "format": "uuid"
+    },
+    "kind": {
+      "const": "type_reference"
+    },
+    "lens_model": {
+      "type": "string",
+      "minLength": 1,
+      "description": "多物距配置中选择的镜头型号；设备目录名称，禁止路径分隔符、控制字符及 . / ..，UTF-8 少于128字节。",
+      "not": {
+        "enum": [
+          "active.json",
+          "device.json",
+          "dcAfSocket.json",
+          "dcAfTracking.json",
+          "dcAfFactoryMode",
+          "dcAfCalibration"
+        ]
+      },
+      "maxLength": 127
+    },
+    "distance_layers": {
+      "type": "array",
+      "minItems": 1,
+      "maxItems": 1,
+      "items": {
+        "$ref": "#/$defs/distanceLayer"
+      }
+    },
+    "directions": {
+      "type": "array",
+      "minItems": 1,
+      "maxItems": 2,
+      "uniqueItems": true,
+      "items": {
+        "enum": [
+          "wide_to_tele",
+          "tele_to_wide"
+        ]
+      }
+    },
+    "sample_count": {
+      "type": "integer",
+      "minimum": 1,
+      "maximum": 7
+    },
+    "max_nodes": {
+      "type": "integer",
+      "minimum": 2,
+      "maximum": 64,
+      "description": "hybrid_simple 每方向初始9、上限64，双向总128。旧策略单向最多33，双向每方向最多16。initial_nodes_per_direction 不超过 max_nodes。"
+    },
+    "zoom_nodes": {
+      "type": "array",
+      "minItems": 2,
+      "maxItems": 64,
+      "items": {
+        "type": "number",
+        "minimum": 0,
+        "maximum": 1
+      },
+      "description": "可选均匀归一化初始训练网格；hybrid 数量对应 initial_nodes_per_direction。"
+    },
+    "validation_nodes": {
+      "type": "array",
+      "minItems": 1,
+      "maxItems": 32,
+      "items": {
+        "type": "number",
+        "minimum": 0,
+        "maximum": 1
+      },
+      "description": "旧策略可指定初始独立中点；hybrid_simple 由设备产生四分位轻量位置，不指定此字段。"
+    },
+    "clear_score_ratio": {
+      "type": "number",
+      "exclusiveMinimum": 0,
+      "exclusiveMaximum": 1
+    },
+    "budget_ms": {
+      "type": "integer",
+      "minimum": 1,
+      "maximum": 1800000
+    },
+    "ambient_temperature_c": {
+      "type": "number"
+    },
+    "sampling_strategy": {
+      "enum": [
+        "stationary",
+        "hybrid",
+        "hybrid_simple"
+      ],
+      "description": "可选；缺失时 stationary。字段连同初始节点参与配方 SHA-256。"
+    },
+    "initial_nodes_per_direction": {
+      "type": "integer",
+      "minimum": 2,
+      "maximum": 64,
+      "description": "hybrid_simple 每方向初始9、上限64，双向总128。旧策略单向最多33，双向每方向最多16。initial_nodes_per_direction 不超过 max_nodes。"
+    },
+    "focus_sweep_gear": {
+      "type": "integer",
+      "minimum": 1,
+      "maximum": 9,
+      "default": 1
+    }
+  },
+  "$defs": {
+    "distanceLayer": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "layer_id",
+        "measured_distance_m",
+        "usage",
+        "target_identifier"
+      ],
+      "properties": {
+        "layer_id": {
+          "type": "string",
+          "minLength": 1
+        },
+        "measured_distance_m": {
+          "type": "number",
+          "exclusiveMinimum": 0
+        },
+        "usage": {
+          "const": "training"
+        },
+        "target_identifier": {
+          "type": "string",
+          "minLength": 1
+        }
+      }
+    }
+  },
+  "allOf": [
+    {
+      "if": {
+        "properties": {
+          "sampling_strategy": {
+            "const": "hybrid_simple"
+          }
+        },
+        "required": [
+          "sampling_strategy"
+        ]
+      },
+      "then": {
+        "properties": {
+          "sample_count": {
+            "const": 5
+          },
+          "clear_score_ratio": {
+            "const": 0.95
+          }
+        },
+        "not": {
+          "required": [
+            "validation_nodes"
+          ]
+        }
+      },
+      "else": {
+        "properties": {
+          "max_nodes": {
+            "maximum": 33
+          },
+          "initial_nodes_per_direction": {
+            "maximum": 33
+          },
+          "zoom_nodes": {
+            "maxItems": 33
+          }
+        },
+        "allOf": [
+          {
+            "if": {
+              "properties": {
+                "directions": {
+                  "minItems": 2
+                }
+              },
+              "required": [
+                "directions"
+              ]
+            },
+            "then": {
+              "properties": {
+                "max_nodes": {
+                  "maximum": 16
+                },
+                "initial_nodes_per_direction": {
+                  "maximum": 16
+                }
+              }
+            }
+          }
+        ]
+      }
+    }
+  ]
+}

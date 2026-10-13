@@ -1,0 +1,16 @@
+{
+  "protocol": "focusir",
+  "version": 1,
+  "kind": "response",
+  "request_id": "11111111-1111-4111-8111-111111111112",
+  "status": "error",
+  "boot_id": "44444444-4444-4444-8444-444444444444",
+  "server_mono_ms": "127300",
+  "error": {
+    "code": "REQUEST_ID_CONFLICT",
+    "message": "request_id 已用于不同的方法或参数。",
+    "retryable": false,
+    "field": "request_id",
+    "details": null
+  }
+}

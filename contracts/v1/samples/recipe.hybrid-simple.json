@@ -1,0 +1,24 @@
+{
+  "schema_version": 1,
+  "recipe_id": "33333333-3333-4333-8333-333333333333",
+  "kind": "type_reference",
+  "lens_model": "REPLACE_WITH_ACTUAL_MODEL",
+  "distance_layers": [
+    {
+      "layer_id": "D10M",
+      "measured_distance_m": 10,
+      "usage": "training",
+      "target_identifier": "TARGET-A"
+    }
+  ],
+  "directions": [
+    "wide_to_tele",
+    "tele_to_wide"
+  ],
+  "sampling_strategy": "hybrid_simple",
+  "initial_nodes_per_direction": 9,
+  "max_nodes": 64,
+  "sample_count": 5,
+  "clear_score_ratio": 0.95,
+  "budget_ms": 900000
+}

@@ -1,0 +1,20 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://focusir.local/contracts/v1/event.schema.json",
+  "title": "focusIR v1 event envelope",
+  "type": "object",
+  "additionalProperties": true,
+  "required": ["protocol", "version", "kind", "boot_id", "event_seq", "server_mono_ms", "topic", "data"],
+  "properties": {
+    "protocol": { "const": "focusir" },
+    "version": { "const": 1 },
+    "kind": { "const": "event" },
+    "boot_id": { "type": "string", "format": "uuid" },
+    "event_seq": { "$ref": "#/$defs/uint64String" },
+    "server_mono_ms": { "$ref": "#/$defs/uint64String" },
+    "topic": { "type": "string", "minLength": 1 },
+    "task_id": { "type": ["string", "null"], "format": "uuid" },
+    "data": { "type": "object" }
+  },
+  "$defs": { "uint64String": { "type": "string", "pattern": "^(0|[1-9][0-9]{0,19})$", "maxLength": 20 } }
+}
