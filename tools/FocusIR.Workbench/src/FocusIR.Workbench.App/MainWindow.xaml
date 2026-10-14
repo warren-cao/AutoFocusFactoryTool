@@ -100,6 +100,7 @@
                         <TextBox Text="{Binding NewLensModel, UpdateSourceTrigger=PropertyChanged}" IsEnabled="{Binding CanBrowseProfiles}" MaxLength="100"/>
                         <WrapPanel Margin="0,8,0,0">
                             <Button Content="新增镜头型号" Click="CreateLensModel_Click" IsEnabled="{Binding CanCreateLensModel}"/>
+                            <Button Content="删除镜头型号" Click="DeleteLensModel_Click" IsEnabled="{Binding CanDeleteLensModel}"/>
                             <Button Content="刷新配置" Click="RefreshProfiles_Click" IsEnabled="{Binding CanBrowseProfiles}"/>
                         </WrapPanel>
                         <TextBlock Text="该镜头的物距配置" Foreground="#647582" Margin="0,12,0,0"/>
@@ -108,6 +109,7 @@
 
                         <WrapPanel Margin="0,8,0,0">
                             <Button Content="新建物距" Click="NewProfile_Click" IsEnabled="{Binding CanCreateProfile}"/>
+                            <Button Content="删除此物距" Click="DeleteProfile_Click" IsEnabled="{Binding CanDeleteProfile}"/>
                             <Button Content="激活此物距" Click="ActivateProfile_Click" IsEnabled="{Binding CanActivateProfile}"/>
                             <Button Content="重新复验" Click="VerifyProfile_Click" IsEnabled="{Binding CanVerifyProfile}"/>
                             <Button Content="重新标定" Click="RecalibrateProfile_Click" IsEnabled="{Binding CanRecalibrateProfile}"/>
@@ -222,6 +224,36 @@
                         </StackPanel>
                         <TextBlock Text="{Binding AutofocusReadinessText}" Foreground="#647582" Margin="0,5,0,0" TextWrapping="Wrap" />
                         <TextBlock Text="{Binding AutofocusResultText}" Foreground="#455A68" Margin="0,4,0,0" TextWrapping="Wrap" />
+                        <StackPanel Margin="0,10,0,2">
+                            <TextBlock Text="手动连续运动" FontSize="15" FontWeight="SemiBold"/>
+                            <StackPanel Margin="0,5,0,2" IsEnabled="{Binding CanAdjustManualJogSpeed}">
+                                <TextBlock Foreground="#647582">
+                                    <Run Text="本次移动速度："/><Run Text="{Binding ManualJogGear}"/><Run Text=" 档（1～9）"/>
+                                </TextBlock>
+                                <Slider Minimum="1" Maximum="9" TickFrequency="1" SmallChange="1" LargeChange="1"
+                                        IsSnapToTickEnabled="True" Value="{Binding ManualJogGear, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}"
+                                        ToolTip="拖动选择下一次长按连续运动的指令速度；运动开始后锁定，松开后可重新调整。"/>
+                            </StackPanel>
+                            <WrapPanel Margin="-4,5,0,0">
+                                <Button Content="连续变倍 -" Tag="ZOOM:negative" IsEnabled="{Binding CanManualJog}"
+                                        PreviewMouseLeftButtonDown="JogButton_PreviewMouseLeftButtonDown"
+                                        PreviewMouseLeftButtonUp="JogButton_PreviewMouseLeftButtonUp"
+                                        LostMouseCapture="JogButton_LostMouseCapture"/>
+                                <Button Content="连续变倍 +" Tag="ZOOM:positive" IsEnabled="{Binding CanManualJog}"
+                                        PreviewMouseLeftButtonDown="JogButton_PreviewMouseLeftButtonDown"
+                                        PreviewMouseLeftButtonUp="JogButton_PreviewMouseLeftButtonUp"
+                                        LostMouseCapture="JogButton_LostMouseCapture"/>
+                                <Button Content="连续聚焦 -" Tag="FOCUS:negative" IsEnabled="{Binding CanManualJog}"
+                                        PreviewMouseLeftButtonDown="JogButton_PreviewMouseLeftButtonDown"
+                                        PreviewMouseLeftButtonUp="JogButton_PreviewMouseLeftButtonUp"
+                                        LostMouseCapture="JogButton_LostMouseCapture"/>
+                                <Button Content="连续聚焦 +" Tag="FOCUS:positive" IsEnabled="{Binding CanManualJog}"
+                                        PreviewMouseLeftButtonDown="JogButton_PreviewMouseLeftButtonDown"
+                                        PreviewMouseLeftButtonUp="JogButton_PreviewMouseLeftButtonUp"
+                                        LostMouseCapture="JogButton_LostMouseCapture"/>
+                            </WrapPanel>
+                            <TextBlock Text="{Binding ManualJogStatus}" Foreground="#647582" Margin="0,3,0,0" TextWrapping="Wrap"/>
+                        </StackPanel>
                         <StackPanel Visibility="{Binding TrackingControlsVisibility}" Margin="0,10,0,0">
                             <TextBlock Text="ZOOM—FOCUS 联动" FontSize="15" FontWeight="SemiBold"/>
                             <TextBlock Text="{Binding TrackingStatusText}" TextWrapping="Wrap" Foreground="#647582" Margin="0,4,0,4"/>

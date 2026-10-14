@@ -26,9 +26,11 @@ public interface IWorkbenchConnectionService : IAsyncDisposable
     Task<JsonElement> GetFactorySamplesAsync(string taskId, string cursor, int limit = 100, string? nodeId = null, CancellationToken cancellationToken = default);
     Task<JsonElement> ListLensModelsAsync(CancellationToken cancellationToken = default);
     Task<JsonElement> CreateLensModelAsync(string lensModel, CancellationToken cancellationToken = default);
+    Task<JsonElement> DeleteLensModelAsync(string lensModel, CancellationToken cancellationToken = default);
     Task<JsonElement> StartLensTaskAsync(string lensModel, bool initialize, int budgetMilliseconds = 180000, CancellationToken cancellationToken = default);
     Task<JsonElement> ListProfilesAsync(string lensModel, CancellationToken cancellationToken = default);
     Task<JsonElement> GetProfileAsync(string lensModel, string profileId, CancellationToken cancellationToken = default);
+    Task<JsonElement> DeleteProfileAsync(string lensModel, string profileId, CancellationToken cancellationToken = default);
     Task<JsonElement> StartNamedFactoryCalibrationAsync(JsonObject recipe, string recipeSha256, string? profileId, string profileName, CancellationToken cancellationToken = default);
     Task<JsonElement> StartProfileTaskAsync(string lensModel, string profileId, bool verify, int budgetMilliseconds, CancellationToken cancellationToken = default);
     Task<JsonElement> UpdateProfileNodesAsync(string lensModel, string profileId, string expectedModelId, JsonArray nodes, CancellationToken cancellationToken = default);
@@ -47,6 +49,9 @@ public interface IWorkbenchConnectionService : IAsyncDisposable
     Task<JsonElement> GetTemperatureAsync(CancellationToken cancellationToken = default);
     Task RefreshSnapshotAsync(CancellationToken cancellationToken = default);
     Task<JsonElement> RequestStopAllAsync(string reason, CancellationToken cancellationToken = default);
+    Task<JsonElement> StartJogAsync(string axis, string direction, int speedGear, int holdTimeoutMilliseconds, CancellationToken cancellationToken = default);
+    Task<JsonElement> KeepaliveJogAsync(string jogId, ulong holdSequence, CancellationToken cancellationToken = default);
+    Task<JsonElement> StopJogAsync(string jogId, CancellationToken cancellationToken = default);
     Task<JsonElement> GetRequestStatusAsync(Guid originalRequestId, CancellationToken cancellationToken = default);
     Task DisconnectAsync(CancellationToken cancellationToken = default);
 }

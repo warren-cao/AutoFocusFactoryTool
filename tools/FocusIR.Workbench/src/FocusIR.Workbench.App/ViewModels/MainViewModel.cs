@@ -110,6 +110,12 @@ public sealed partial class MainViewModel : INotifyPropertyChanged, IAsyncDispos
     private readonly List<Guid> _uncertainRequestIds = [];
     private readonly Dictionary<Guid, string> _uncertainRequestMethods = new();
     private bool _operationBusy;
+    private readonly SemaphoreSlim _manualJogGate = new(1,1);
+    private CancellationTokenSource? _manualJogKeepaliveCancellation;
+    private string? _manualJogId;
+    private bool _manualJogHeld;
+    private int _manualJogGear=3;
+    private string _manualJogStatus = "默认3档；获取设备操作权后，按住按钮连续运动，松开立即停止。";
     private string _sceneBudgetMilliseconds = "180000";
     private readonly DispatcherTimer _snapshotAgeTimer;
     // 任务事件仅用于唤醒状态查询；已有待处理通知时合并后续通知。
@@ -220,6 +226,28 @@ public sealed partial class MainViewModel : INotifyPropertyChanged, IAsyncDispos
     public bool CanConnect => !_isBusy && (_state is ConnectionState.Disconnected or ConnectionState.Faulted);
     public bool CanDisconnect => !_isBusy && (_state is ConnectionState.Connected or ConnectionState.Reconnecting);
     public bool CanStop => !_operationBusy && _state == ConnectionState.Connected && StopButtonVisibility == Visibility.Visible;
+    public bool CanManualJog => !_operationBusy && !Charts.IsEditing && !_factoryTaskFinalizing
+        && _state == ConnectionState.Connected && _lease?.Purpose == "operation"
+        && (_manualJogHeld || (!HasActiveTask() && NoActiveTaskConfirmed()))
+        && _device?.AxisRangesValid == true && ReadBoolean(_snapshot,"mechanical_ready")==true
+        && Supports("motion.jog.start") && Supports("motion.jog.keepalive") && Supports("motion.jog.stop");
+    public bool IsManualJogHeld => _manualJogHeld;
+    public bool CanAdjustManualJogSpeed => CanManualJog && !_manualJogHeld && _manualJogId is null;
+    public int ManualJogGear
+    {
+        get => _manualJogGear;
+        set
+        {
+            var gear=Math.Clamp(value,1,9);if(_manualJogGear==gear) return;
+            _manualJogGear=gear;OnPropertyChanged();
+            if(!_manualJogHeld && _manualJogId is null)
+            {
+                _manualJogStatus=$"已选择{gear}档；按住按钮后，本次连续运动使用该速度。";
+                OnPropertyChanged(nameof(ManualJogStatus));
+            }
+        }
+    }
+    public string ManualJogStatus => _manualJogStatus;
     public Visibility StopButtonVisibility => _device is not null
         && _device.SupportedMethods.Contains("motion.stop_all")
         && (_device.Role is "operator" or "factory" or "engineer")
@@ -351,9 +379,9 @@ public sealed partial class MainViewModel : INotifyPropertyChanged, IAsyncDispos
         : $"位置前置条件未满足：{AxesReadinessProblems()}；停稳由人工确认。";
 
     public string FactoryReadinessText => FormatFactoryReadiness();
-    public string JogCapabilityText => Supports("motion.jog.start")
-        ? "设备声明支持 jog；工作台按住看门狗交互尚未开放。"
-        : "设备未公布 jog；当前只显示原始位置，不发送手动运动。";
+    public string JogCapabilityText => Supports("motion.jog.start") && Supports("motion.jog.keepalive") && Supports("motion.jog.stop")
+        ? "设备支持长按连续运动：按下启动、按住保活、松开停止；设备看门狗会在保活中断后自动停止。"
+        : "设备未完整公布长按运动接口；当前不发送手动连续运动。";
     public string StateText => _state switch
     {
         ConnectionState.Disconnected => "未连接",
@@ -471,6 +499,7 @@ public sealed partial class MainViewModel : INotifyPropertyChanged, IAsyncDispos
 
     public async Task DisconnectAsync()
     {
+        await EndManualJogAsync("连接断开");
         await StopTaskMonitorAsync();
         await _connection.DisconnectAsync();
         ClearProfiles();
@@ -509,7 +538,9 @@ public sealed partial class MainViewModel : INotifyPropertyChanged, IAsyncDispos
         OnPropertyChanged(nameof(StatusNotice));
         try
         {
+            _manualJogHeld=false;_manualJogKeepaliveCancellation?.Cancel();
             var result = await _connection.RequestStopAllAsync("workbench_immediate_stop");
+            _manualJogId=null;
             var requested = ReadBoolean(result, "stop_requested");
             _statusNotice = requested switch
             {
@@ -558,11 +589,86 @@ public sealed partial class MainViewModel : INotifyPropertyChanged, IAsyncDispos
             return;
         await RunOperationAsync(async () =>
         {
+            await EndManualJogAsync("释放操作权");
             await _connection.ReleaseControlAsync();
             _lease = null;
             _statusNotice = "已请求释放本会话的控制租约。";
             AddActivity(_statusNotice);
         });
+    }
+
+    public async Task BeginManualJogAsync(string axis,string direction)
+    {
+        if(!CanManualJog || axis is not ("ZOOM" or "FOCUS") || direction is not ("positive" or "negative")) return;
+        _manualJogHeld=true;var stopImmediately=false;var gear=ManualJogGear;
+        OnPropertyChanged(nameof(CanManualJog));OnPropertyChanged(nameof(CanAdjustManualJogSpeed));
+        await _manualJogGate.WaitAsync();
+        try
+        {
+            if(!_manualJogHeld || _manualJogId is not null) return;
+            var result=await _connection.StartJogAsync(axis,direction,gear,800);
+            _manualJogId=ReadString(result,"jog_id") ?? throw new InvalidOperationException("设备未返回连续运动编号。");
+            var trackingFollow=ReadBoolean(result,"tracking_follow")==true;
+            if(!_manualJogHeld) stopImmediately=true;
+            else
+            {
+                _manualJogKeepaliveCancellation?.Cancel();
+                _manualJogKeepaliveCancellation=new CancellationTokenSource();
+                _=KeepaliveManualJogAsync(_manualJogId,_manualJogKeepaliveCancellation.Token);
+                _manualJogStatus=$"正在连续{(axis=="ZOOM"?"变倍":"聚焦")} {(direction=="positive"?"+":"-")}（{gear}档）{(axis=="ZOOM"?(trackingFollow?"，FOCUS随动已生效":"，当前为单轴变倍") : "")}；松开按钮立即停止。";
+                OnPropertyChanged(nameof(ManualJogStatus));
+            }
+        }
+        catch(Exception ex)
+        {
+            _manualJogHeld=false;_manualJogStatus=$"连续运动未启动：{ex.Message}";OnPropertyChanged(nameof(ManualJogStatus));OnPropertyChanged(nameof(CanManualJog));OnPropertyChanged(nameof(CanAdjustManualJogSpeed));
+            try { await _connection.RequestStopAllAsync("jog_start_uncertain"); } catch { }
+        }
+        finally { _manualJogGate.Release(); }
+        if(stopImmediately) await EndManualJogAsync("按钮已松开");
+    }
+
+    private async Task KeepaliveManualJogAsync(string jogId,CancellationToken cancellationToken)
+    {
+        ulong sequence=0;
+        try
+        {
+            using var timer=new PeriodicTimer(TimeSpan.FromMilliseconds(250));
+            while(await timer.WaitForNextTickAsync(cancellationToken))
+            {
+                if(!_manualJogHeld || _manualJogId!=jogId) return;
+                await _connection.KeepaliveJogAsync(jogId,++sequence,cancellationToken);
+            }
+        }
+        catch(OperationCanceledException) when(cancellationToken.IsCancellationRequested) { }
+        catch(Exception ex)
+        {
+            OnUi(() => { _manualJogStatus=$"连续运动保活中断：{ex.Message}；设备看门狗将停止电机。";OnPropertyChanged(nameof(ManualJogStatus));OnPropertyChanged(nameof(CanManualJog));OnPropertyChanged(nameof(CanAdjustManualJogSpeed)); });
+            _manualJogHeld=false;
+            try { await _connection.RequestStopAllAsync("jog_keepalive_failed",CancellationToken.None); } catch { }
+        }
+    }
+
+    public async Task EndManualJogAsync(string reason="按钮已松开")
+    {
+        _manualJogHeld=false;_manualJogKeepaliveCancellation?.Cancel();
+        await _manualJogGate.WaitAsync();
+        try
+        {
+            var jogId=_manualJogId;_manualJogId=null;
+            if(jogId is not null)
+            {
+                try { await _connection.StopJogAsync(jogId); }
+                catch
+                {
+                    try { await _connection.RequestStopAllAsync("jog_stop_failed"); } catch { }
+                }
+            }
+            _manualJogStatus=$"{reason}，停止请求已发送；请观察位置反馈确认停稳。";
+            OnPropertyChanged(nameof(ManualJogStatus));
+            OnPropertyChanged(nameof(CanManualJog));OnPropertyChanged(nameof(CanAdjustManualJogSpeed));
+        }
+        finally { _manualJogGate.Release(); }
     }
 
     public async Task StartAutofocusAsync()
@@ -2215,6 +2321,8 @@ public sealed partial class MainViewModel : INotifyPropertyChanged, IAsyncDispos
         OnPropertyChanged(nameof(SourceBadgeBrush));
         OnPropertyChanged(nameof(StopButtonVisibility));
         OnPropertyChanged(nameof(CanStop));
+        OnPropertyChanged(nameof(CanManualJog));
+        OnPropertyChanged(nameof(CanAdjustManualJogSpeed));
         RefreshOperationProperties();
     }
 
@@ -2223,6 +2331,8 @@ public sealed partial class MainViewModel : INotifyPropertyChanged, IAsyncDispos
         RefreshProfileProperties();
         RefreshAutofocusConfigurationProperties();
         OnPropertyChanged(nameof(CanStop));
+        OnPropertyChanged(nameof(CanManualJog));
+        OnPropertyChanged(nameof(CanAdjustManualJogSpeed));
         OnPropertyChanged(nameof(OperationControlsVisibility));
         OnPropertyChanged(nameof(TrackingControlsVisibility)); OnPropertyChanged(nameof(TrackingStatusText));
         OnPropertyChanged(nameof(CanRefreshTracking)); OnPropertyChanged(nameof(CanVerifyTracking));
@@ -2281,6 +2391,7 @@ public sealed partial class MainViewModel : INotifyPropertyChanged, IAsyncDispos
         _snapshotAgeTimer.Stop();
         _updateCancellation?.Cancel();
 
+        await EndManualJogAsync("工作台关闭");
         await StopTaskMonitorAsync();
         Charts.Dispose();
         await _connection.DisposeAsync();

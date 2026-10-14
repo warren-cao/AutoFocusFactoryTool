@@ -104,7 +104,7 @@ public sealed class ProtocolClient : IAsyncDisposable
 
         try
         {
-            var urgent = method is "motion.stop_all" or "task.cancel";
+            var urgent = method is "motion.stop_all" or "motion.jog.stop" or "task.cancel";
             _sendQueue.Enqueue(frame, urgent);
             using var linked = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken, _lifetime.Token);
             linked.CancelAfter(timeout ?? TimeSpan.FromSeconds(10));

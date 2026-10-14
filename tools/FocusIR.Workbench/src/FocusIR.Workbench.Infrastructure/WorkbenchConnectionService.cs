@@ -240,6 +240,14 @@ public sealed class WorkbenchConnectionService : IWorkbenchConnectionService
         return response.GetProperty("result").Clone();
     }
 
+    public async Task<JsonElement> DeleteLensModelAsync(string lensModel, CancellationToken cancellationToken = default)
+    {
+        EnsureSupported("lens.delete");
+        var response = await RpcAsync(RequireConnectedClient(), "lens.delete", new JsonObject { ["lens_model"] = lensModel },
+            cancellationToken, RequireControlLease("factory")).ConfigureAwait(false);
+        return response.GetProperty("result").Clone();
+    }
+
     public Task<JsonElement> StartLensTaskAsync(string lensModel, bool initialize, int budgetMilliseconds = 180000, CancellationToken cancellationToken = default)
     {
         if (initialize && (budgetMilliseconds is < 1 or > 600000))
@@ -259,6 +267,41 @@ public sealed class WorkbenchConnectionService : IWorkbenchConnectionService
     public async Task<JsonElement> GetProfileAsync(string lensModel,string profileId,CancellationToken cancellationToken = default)
     {
         EnsureSupported("profile.get");var response=await RpcAsync(RequireConnectedClient(),"profile.get",new JsonObject { ["lens_model"]=lensModel,["profile_id"]=profileId },cancellationToken).ConfigureAwait(false);
+        return response.GetProperty("result").Clone();
+    }
+    public async Task<JsonElement> DeleteProfileAsync(string lensModel,string profileId,CancellationToken cancellationToken = default)
+    {
+        EnsureSupported("profile.delete");
+        var response=await RpcAsync(RequireConnectedClient(),"profile.delete",new JsonObject { ["lens_model"]=lensModel,["profile_id"]=profileId },
+            cancellationToken,RequireControlLease("factory")).ConfigureAwait(false);
+        return response.GetProperty("result").Clone();
+    }
+
+    public async Task<JsonElement> StartJogAsync(string axis, string direction, int speedGear, int holdTimeoutMilliseconds, CancellationToken cancellationToken = default)
+    {
+        EnsureSupported("motion.jog.start");
+        if (axis is not ("ZOOM" or "FOCUS") || direction is not ("positive" or "negative") || speedGear is < 1 or > 9
+            || holdTimeoutMilliseconds is < 200 or > 2000) throw new ArgumentException("连续运动参数无效。");
+        var response=await RpcAsync(RequireConnectedClient(),"motion.jog.start",new JsonObject {
+            ["axis"]=axis,["direction"]=direction,["speed_gear"]=speedGear,["hold_timeout_ms"]=holdTimeoutMilliseconds
+        },cancellationToken,RequireControlLease("operation")).ConfigureAwait(false);
+        return response.GetProperty("result").Clone();
+    }
+
+    public async Task<JsonElement> KeepaliveJogAsync(string jogId, ulong holdSequence, CancellationToken cancellationToken = default)
+    {
+        EnsureSupported("motion.jog.keepalive");
+        var response=await RpcAsync(RequireConnectedClient(),"motion.jog.keepalive",new JsonObject {
+            ["jog_id"]=jogId,["hold_seq"]=holdSequence.ToString(System.Globalization.CultureInfo.InvariantCulture)
+        },cancellationToken,RequireControlLease("operation")).ConfigureAwait(false);
+        return response.GetProperty("result").Clone();
+    }
+
+    public async Task<JsonElement> StopJogAsync(string jogId, CancellationToken cancellationToken = default)
+    {
+        EnsureSupported("motion.jog.stop");
+        var response=await RpcAsync(RequireConnectedClient(),"motion.jog.stop",new JsonObject { ["jog_id"]=jogId },
+            cancellationToken,RequireControlLease("operation")).ConfigureAwait(false);
         return response.GetProperty("result").Clone();
     }
     public Task<JsonElement> StartNamedFactoryCalibrationAsync(JsonObject recipe,string recipeSha256,string? profileId,string profileName,CancellationToken cancellationToken = default)

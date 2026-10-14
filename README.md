@@ -41,6 +41,8 @@ dotnet build .\FocusIR.Workbench.sln -c Release --no-restore
 
 当前单物距标定可使用连续扫焦、局部精调和双向模型。界面按设备能力启用操作；实际支持的方法以 `device.get_capabilities` 为准。详细字段见 `contracts/v1/`。
 
+支持镜头型号和物距配置删除确认，以及 1～9 档长按连续变倍、连续聚焦。长按操作需要 operation 控制租约；连续变倍的 FOCUS 随动由设备状态和有效曲线决定。配套接口、停止行为与人工验收说明见 [配置删除与长按连续运动](docs/config-delete-manual-jog.md)。
+
 ## 安全与数据
 
 通信使用工厂网络内的普通 TCP。工作台标识只用于工厂会话识别；运动仍受控制租约、任务互斥、心跳和断线停止约束。软件停止请求的返回状态应与电机实际停稳状态区分。

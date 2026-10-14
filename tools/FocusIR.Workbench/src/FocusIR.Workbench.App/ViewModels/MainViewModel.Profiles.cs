@@ -136,7 +136,11 @@ public sealed partial class MainViewModel
         && !HasActiveTask() && Supports("lens.list") && Supports("profile.list");
     public bool CanCreateLensModel => CanBrowseProfiles && !_profileLoading && Supports("lens.create")
         && FactoryControlsVisibility == Visibility.Visible && NewLensModelValid;
+    public bool CanDeleteLensModel => CanBrowseProfiles && !_profileLoading && SelectedLensModel is not null
+        && _lease is null && NoActiveTaskConfirmed() && Supports("lens.delete");
     public bool CanCreateProfile => CanBrowseProfiles && !_profileLoading && SelectedLensModel is not null;
+    public bool CanDeleteProfile => CanCreateProfile && SelectedProfileLoaded && SelectedProfile is not null
+        && _lease is null && NoActiveTaskConfirmed() && Supports("profile.delete");
     private bool SelectedProfileLoaded => SelectedLensModel?.Model == _loadedProfileLens
         && SelectedProfile is not null && SelectedProfile.Id == _loadedProfileId;
     public bool CanRecalibrateProfile => CanCreateProfile && SelectedProfileLoaded && _lease is null && NoActiveTaskConfirmed()
@@ -161,7 +165,9 @@ public sealed partial class MainViewModel
         OnPropertyChanged(nameof(ProfileControlsVisibility));
         OnPropertyChanged(nameof(CanBrowseProfiles));
         OnPropertyChanged(nameof(CanCreateLensModel));
+        OnPropertyChanged(nameof(CanDeleteLensModel));
         OnPropertyChanged(nameof(CanCreateProfile));
+        OnPropertyChanged(nameof(CanDeleteProfile));
         OnPropertyChanged(nameof(CanRecalibrateProfile));
         OnPropertyChanged(nameof(CanRunProfileTask));
         OnPropertyChanged(nameof(CanVerifyProfile));
@@ -468,6 +474,58 @@ public sealed partial class MainViewModel
             NewLensModel = "";
             await RefreshProfilesCoreAsync(true, name);
             AddActivity($"已创建镜头型号 {name}，可填写首个物距的标定参数。");
+        });
+    }
+
+    public async Task DeleteLensModelAsync()
+    {
+        if (!CanDeleteLensModel || SelectedLensModel is not { } selected) return;
+        var model=selected.Model;
+        await RunOperationAsync(async () =>
+        {
+            _lease=await _connection.AcquireControlAsync("factory");
+            try
+            {
+                await _connection.RefreshSnapshotAndResubscribeAsync();
+                if (HasActiveTask() || !NoActiveTaskConfirmed()) throw new InvalidOperationException("设备有活动任务，不能删除镜头型号。");
+                var result=await _connection.DeleteLensModelAsync(model);
+                ++_profileLoadGeneration;ResetProfileSelection();_factoryEditorOpen=false;Charts.Begin(null);
+                await RefreshProfilesCoreAsync(true);
+                await _connection.RefreshSnapshotAndResubscribeAsync();
+                AddActivity(FactoryDataReader.Boolean(result,"was_active")
+                    ? $"已删除镜头型号 {model} 及其全部物距配置；原激活曲线已置为闲置。"
+                    : $"已删除镜头型号 {model} 及其全部物距配置。");
+            }
+            finally
+            {
+                try { await _connection.ReleaseControlAsync(); } finally { _lease=null;RefreshOperationProperties(); }
+            }
+        });
+    }
+
+    public async Task DeleteProfileAsync()
+    {
+        if (!CanDeleteProfile || SelectedLensModel is not { } lens || SelectedProfile is not { } selected) return;
+        var lensModel=lens.Model;var profileId=selected.Id;var displayName=selected.DisplayName;
+        await RunOperationAsync(async () =>
+        {
+            _lease=await _connection.AcquireControlAsync("factory");
+            try
+            {
+                await _connection.RefreshSnapshotAndResubscribeAsync();
+                if (HasActiveTask() || !NoActiveTaskConfirmed()) throw new InvalidOperationException("设备有活动任务，不能删除物距配置。");
+                var result=await _connection.DeleteProfileAsync(lensModel,profileId);
+                ++_profileLoadGeneration;ResetProfileSelection();_factoryEditorOpen=false;Charts.Begin(null);
+                await RefreshProfilesCoreAsync(true,lensModel);
+                await _connection.RefreshSnapshotAndResubscribeAsync();
+                AddActivity(FactoryDataReader.Boolean(result,"was_active")
+                    ? $"已删除 {lensModel} / {displayName}；原激活曲线已置为闲置。"
+                    : $"已删除 {lensModel} / {displayName}。");
+            }
+            finally
+            {
+                try { await _connection.ReleaseControlAsync(); } finally { _lease=null;RefreshOperationProperties(); }
+            }
         });
     }
 

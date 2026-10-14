@@ -4,9 +4,9 @@
   "source_document": "README.md",
   "audit": {
     "status": "source-reviewed-and-compiled-hardware-unverified",
-    "reason": "曲线显式编辑/取消、实时草稿预览及人工节点保存任务；只源码检查与编译，实机人工验收。",
+    "reason": "增加镜头/物距删除和长按连续运动看门狗交互；只源码检查与编译，实机人工验收。",
     "device_source_path": "/workspace/project/D6P/rk3576-ThermEye-D6P/zs_work/module/focusIR",
-    "reviewed_at": "2026-10-12",
+    "reviewed_at": "2026-10-14",
     "current_supported_methods": [
       "session.ping",
       "session.close",
@@ -16,6 +16,9 @@
       "control.acquire",
       "control.renew",
       "control.release",
+      "motion.jog.start",
+      "motion.jog.keepalive",
+      "motion.jog.stop",
       "motion.stop_all",
       "af.start",
       "af.get_config",
@@ -41,11 +44,13 @@
       "tracking.stop",
       "profile.list",
       "profile.get",
+      "profile.delete",
       "profile.activate",
       "profile.verify",
       "device.get_info",
       "lens.list",
       "lens.create",
+      "lens.delete",
       "profile.update_nodes"
     ]
   },
@@ -239,10 +244,10 @@
       "minimum_role": "operator",
       "requires_lease": true,
       "asynchronous": false,
-      "implementation_status": "not-supported-by-current-socket-service",
+      "implementation_status": "source-reviewed-and-compiled-hardware-unverified",
       "hardware_verified": false,
-      "capability_advertised": false,
-      "implementation_note": "未公布于当前 supported_methods；当前服务对未接入 RPC 返回 NOT_SUPPORTED。"
+      "capability_advertised": true,
+      "implementation_note": "operation租约且无活动任务时启动指定轴的raw正/负方向连续运动；速度档1～9，保活超时200～2000ms。ZOOM在随动开启且当前曲线有效时启动本地手动随动任务，FOCUS追赶曲线；否则单轴运动。设备用已验证方向映射转换板卡方向，无法确认映射时拒绝启动。"
     },
     {
       "method": "motion.jog.keepalive",
@@ -251,10 +256,10 @@
       "minimum_role": "operator",
       "requires_lease": true,
       "asynchronous": false,
-      "implementation_status": "not-supported-by-current-socket-service",
+      "implementation_status": "source-reviewed-and-compiled-hardware-unverified",
       "hardware_verified": false,
-      "capability_advertised": false,
-      "implementation_note": "未公布于当前 supported_methods；当前服务对未接入 RPC 返回 NOT_SUPPORTED。"
+      "capability_advertised": true,
+      "implementation_note": "同一operation租约、jog_id和严格递增hold_seq延长看门狗；松开、保活超时、断连或租约失效时设备自动停止。"
     },
     {
       "method": "motion.jog.update",
@@ -275,10 +280,10 @@
       "minimum_role": "operator",
       "requires_lease": true,
       "asynchronous": false,
-      "implementation_status": "not-supported-by-current-socket-service",
+      "implementation_status": "source-reviewed-and-compiled-hardware-unverified",
       "hardware_verified": false,
-      "capability_advertised": false,
-      "implementation_note": "未公布于当前 supported_methods；当前服务对未接入 RPC 返回 NOT_SUPPORTED。"
+      "capability_advertised": true,
+      "implementation_note": "松开上位机按钮时停止本jog轴；停止响应不伪称控制板已提供停稳确认，位置由后续设备反馈显示。"
     },
     {
       "method": "motion.step",
@@ -388,7 +393,7 @@
       "implementation_status": "implemented-in-source-unverified",
       "hardware_verified": false,
       "capability_advertised": true,
-      "implementation_note": "设备源码公布或实现了此入口；不表示控制器、硬件或光学验收通过。"
+      "implementation_note": "普通单次自动聚焦（SingleAF）结果可附带 af_search_result 对象，包含 conclusion（focused / best_available / failed）、peak_confirmed、full_range_covered、global_scan_count，以及可选 scanned_min / scanned_max（已扫描 raw 范围）、final_focus / final_score（最终 raw 焦点和评分）。best_available 表示已返回本次扫描最高评分的有效点并停稳，未确认可靠峰，不宣称可靠聚焦或曲线、控制器、硬件及光学验收通过；旧设备缺此字段时按原结果处理。"
     },
     {
       "method": "scene.initialize",
@@ -498,7 +503,7 @@
       "implementation_status": "implemented-in-source-unverified",
       "hardware_verified": false,
       "capability_advertised": true,
-      "implementation_note": "设备源码公布或实现了此入口；不表示控制器、硬件或光学验收通过。"
+      "implementation_note": "仅普通单次自动聚焦（SingleAF）的任务结果可附带 af_search_result 对象，包含 conclusion（focused / best_available / failed）、peak_confirmed、full_range_covered、global_scan_count，以及可选 scanned_min / scanned_max（已扫描 raw 范围）、final_focus / final_score（最终 raw 焦点和评分）。best_available 表示已返回本次扫描最高评分的有效点并停稳，未确认可靠峰，不宣称可靠聚焦或曲线、控制器、硬件及光学验收通过；旧设备缺此字段时按原结果处理。其他任务不使用此对象。"
     },
     {
       "method": "task.list",
@@ -966,6 +971,19 @@
       "params_schema": "schemas/profiles.schema.json#/$defs/activateOrVerify"
     },
     {
+      "method": "profile.delete",
+      "parameter_summary": "lens_model, profile_id",
+      "permission_contract": "F/E+factory lease+无活动任务",
+      "minimum_role": "factory",
+      "requires_lease": true,
+      "asynchronous": false,
+      "implementation_status": "source-reviewed-and-compiled-hardware-unverified",
+      "hardware_verified": false,
+      "capability_advertised": true,
+      "implementation_note": "原子移除物距索引及该物距不可变模型文件；删除当前激活物距时清空运行曲线和持久化速度表，设备进入无活动曲线状态。",
+      "params_schema": "schemas/profiles.schema.json#/$defs/deleteProfile"
+    },
+    {
       "method": "profile.verify",
       "parameter_summary": "lens_model, profile_id, budget_ms?",
       "permission_contract": "F/E+factory lease+task mutex",
@@ -1016,6 +1034,19 @@
       "capability_advertised": true,
       "implementation_note": "不扫描、不驱动镜头；校验节点ID/数量/机械行程/期望模型ID，设备重建PCHIP并事务保存与激活。人工方法标记manual_adjustment，不复用旧静态/动态验收；返回task_id和服务器分配的new_model_id，终态回读确认。",
       "params_schema": "schemas/profiles.schema.json#/$defs/updateNodes"
+    },
+    {
+      "method": "lens.delete",
+      "parameter_summary": "lens_model",
+      "permission_contract": "F/E+factory lease+无活动任务",
+      "minimum_role": "factory",
+      "requires_lease": true,
+      "asynchronous": false,
+      "implementation_status": "source-reviewed-and-compiled-hardware-unverified",
+      "hardware_verified": false,
+      "capability_advertised": true,
+      "implementation_note": "删除镜头型号目录及其全部物距、曲线和速度数据；删除当前激活型号时同步清空active记录及运行曲线。",
+      "params_schema": "schemas/profiles.schema.json#/$defs/deleteLens"
     }
   ]
 }

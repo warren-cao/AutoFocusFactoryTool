@@ -10,7 +10,7 @@
 | --- | --- | --- |
 | WPF 界面 | `App.xaml*`、`MainWindow.xaml*` | 启动、窗口布局、控件事件与停止入口 |
 | 页面状态 | `ViewModels/MainViewModel*.cs` | 连接、能力、控制租约、任务状态、操作命令与升级交互 |
-| 镜头与物距 | `MainViewModel.Profiles.cs`、`MainViewModel.LensInitialization.cs` | 镜头型号、物距配置、初始化、激活与复验 |
+| 镜头与物距 | `MainViewModel.Profiles.cs`、`MainViewModel.LensInitialization.cs` | 镜头型号、物距配置、删除、初始化、激活与复验 |
 | 曲线编辑 | `MainViewModel.CurveEditing.cs`、`CalibrationChartsViewModel*.cs`、`Controls/CalibrationPlot.cs` | 节点拖动草稿、采样/模型可视化、保存应用和 CSV 导出 |
 | 标定参数 | `MainViewModel.AutofocusConfiguration.cs`、`Domain/FactoryCalibrationData.cs` | AF 参数、工厂配方、节点/样本读取与解释 |
 | 应用边界 | `Application/IWorkbenchConnectionService.cs`、`IUpdateService.cs` | 界面依赖的连接、业务操作与升级契约 |
@@ -29,10 +29,11 @@
 ## 关键行为与维护入口
 
 - 连接：`WorkbenchConnectionService.OpenSessionAsync` 校验握手、读取能力与快照，再开始心跳和事件订阅；`ReconnectLoopAsync` 恢复只读状态，不复用已失效的控制租约。
-- RPC：`ProtocolClient` 用请求 ID 配对响应。运动或任务请求超时后，连接服务查询原请求状态，避免重发导致重复物理动作。
+- RPC：`ProtocolClient` 用请求 ID 配对响应。运动或任务请求超时后，连接服务查询原请求状态，避免重发导致重复物理动作；长按运动使用启动、保活和高优先级停止三段请求。
 - 事件：`DeviceStateStore` 以快照为基线合并可靠事件；发现事件缺口时重新读取快照并订阅。
 - 任务：`MainViewModel` 负责用户操作与状态展示；设备持续任务仍由设备端执行，工作台只查询、取消或停止。
 - 标定：`FactoryCalibrationData` 读取分页记录；`CalibrationChartsViewModel` 展示双向节点和原始清晰度；曲线编辑保存前使用当前模型 ID 做并发校验。
+- 手动运动：`MainWindow` 捕获长按和松开，`MainViewModel` 每250 ms保活；设备800 ms看门狗负责断连或保活丢失后的停止。
 - 协议变更：先核对 `contracts/v1/method-catalog.json` 与相关 Schema，再同步修改上位机连接服务和设备端分发器。能力表决定界面是否开放相应操作。
 - 发布：`release-self-hosted.yml` 是唯一发布入口，推送源码标签后手动运行；`eng/release.ps1` 只接受与集中版本和更新日志一致、且属于 `master` 历史的稳定版标签，调用既有 CI，生成四个不可覆盖的 Release 附件。本地修改仅做源码检查与编译。
 - 签名：`eng/New-UpdateSigningKey.ps1` 生成 ECDSA P-256 密钥；流水线私钥保存在 GitHub Actions Secret，客户端仅按 `keyId` 内置并信任对应公钥。

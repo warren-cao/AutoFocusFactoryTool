@@ -33,6 +33,9 @@
         }
       }
     },
+    "deleteProfile": {
+      "$ref": "#/$defs/get"
+    },
     "activateOrVerify": {
       "type": "object",
       "additionalProperties": false,
@@ -67,6 +70,8 @@
           "device.json",
           "dcAfSocket.json",
           "dcAfTracking.json",
+          "dcAfAutofocus.json",
+          "dcAfAutofocus.json.pending",
           "dcAfFactoryMode",
           "dcAfCalibration"
         ]
@@ -89,6 +94,9 @@
           "$ref": "#/$defs/lensModel"
         }
       }
+    },
+    "deleteLens": {
+      "$ref": "#/$defs/lensCreate"
     },
     "updateNodes": {
       "type": "object",

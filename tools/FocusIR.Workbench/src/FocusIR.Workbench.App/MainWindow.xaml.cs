@@ -1,5 +1,6 @@
 using System.Windows;
 using System.Windows.Input;
+using System.Windows.Controls;
 using FocusIR.Workbench.App.ViewModels;
 
 namespace FocusIR.Workbench.App;
@@ -16,6 +17,7 @@ public partial class MainWindow : Window
         _viewModel = new MainViewModel();
         DataContext = _viewModel;
         Closed += async (_, _) => await _viewModel.DisposeAsync();
+        Deactivated += async (_, _) => await _viewModel.EndManualJogAsync("窗口失去焦点");
     }
 
     private async void Connect_Click(object sender, RoutedEventArgs e)
@@ -25,9 +27,24 @@ public partial class MainWindow : Window
 
     private async void RefreshProfiles_Click(object sender,RoutedEventArgs e) => await _viewModel.RefreshProfilesAsync();
     private async void CreateLensModel_Click(object sender,RoutedEventArgs e) => await _viewModel.CreateLensModelAsync();
+    private async void DeleteLensModel_Click(object sender,RoutedEventArgs e)
+    {
+        if (_viewModel.SelectedLensModel is not { } lens) return;
+        var message=$"确定删除镜头型号“{lens.Model}”吗？\n\n该型号下的 {lens.ProfileCount} 个物距配置、曲线和速度表都会删除。若它当前已激活，设备运行曲线会立即置为闲置。此操作无法撤销。";
+        if(MessageBox.Show(this,message,"确认删除镜头型号",MessageBoxButton.YesNo,MessageBoxImage.Warning,MessageBoxResult.No)==MessageBoxResult.Yes)
+            await _viewModel.DeleteLensModelAsync();
+    }
     private async void ActivateLensModel_Click(object sender,RoutedEventArgs e) => await _viewModel.StartLensTaskAsync(false);
     private async void InitializeLens_Click(object sender,RoutedEventArgs e) => await _viewModel.StartLensTaskAsync(true);
     private void NewProfile_Click(object sender,RoutedEventArgs e) => _viewModel.NewProfile();
+    private async void DeleteProfile_Click(object sender,RoutedEventArgs e)
+    {
+        if (_viewModel.SelectedLensModel is not { } lens || _viewModel.SelectedProfile is not { } profile) return;
+        var active=profile.Active?"\n\n该物距当前已激活，删除后设备运行曲线会立即置为闲置。":"";
+        var message=$"确定删除“{lens.Model} / {profile.DisplayName}”物距配置吗？\n\n对应曲线模型和速度数据将一并删除。{active}\n\n此操作无法撤销。";
+        if(MessageBox.Show(this,message,"确认删除物距配置",MessageBoxButton.YesNo,MessageBoxImage.Warning,MessageBoxResult.No)==MessageBoxResult.Yes)
+            await _viewModel.DeleteProfileAsync();
+    }
     private void RecalibrateProfile_Click(object sender,RoutedEventArgs e) => _viewModel.RecalibrateProfile();
     private async void ActivateProfile_Click(object sender,RoutedEventArgs e) => await _viewModel.StartProfileTaskAsync(false);
     private async void VerifyProfile_Click(object sender,RoutedEventArgs e) => await _viewModel.StartProfileTaskAsync(true);
@@ -63,6 +80,35 @@ public partial class MainWindow : Window
     private async void VerifyTracking_Click(object sender, RoutedEventArgs e) => await _viewModel.StartTrackingAsync(true);
     private async void MoveTracking_Click(object sender, RoutedEventArgs e) => await _viewModel.StartTrackingAsync(false);
     private async void StopTracking_Click(object sender, RoutedEventArgs e) => await _viewModel.StopTrackingAsync();
+
+    private async void JogButton_PreviewMouseLeftButtonDown(object sender,MouseButtonEventArgs e)
+    {
+        if(sender is not Button button || button.Tag is not string tag) return;
+        var parts=tag.Split(':');if(parts.Length!=2) return;
+        e.Handled=true;button.CaptureMouse();
+        await _viewModel.BeginManualJogAsync(parts[0],parts[1]);
+    }
+
+    private async void JogButton_PreviewMouseLeftButtonUp(object sender,MouseButtonEventArgs e)
+    {
+        e.Handled=true;await _viewModel.EndManualJogAsync();
+        if(sender is Button button && button.IsMouseCaptured) button.ReleaseMouseCapture();
+    }
+
+    private async void JogButton_LostMouseCapture(object sender,MouseEventArgs e)
+    {
+        if(!_viewModel.IsManualJogHeld) return;
+        if(Mouse.LeftButton==MouseButtonState.Pressed && sender is Button button && button.IsEnabled)
+        {
+            await button.Dispatcher.InvokeAsync(() =>
+            {
+                if(_viewModel.IsManualJogHeld && Mouse.LeftButton==MouseButtonState.Pressed && !button.IsMouseCaptured)
+                    button.CaptureMouse();
+            });
+            return;
+        }
+        await _viewModel.EndManualJogAsync("按钮已松开或捕获已结束");
+    }
 
     private async void ReadTemperature_Click(object sender, RoutedEventArgs e) => await _viewModel.ReadTemperatureAsync();
 
