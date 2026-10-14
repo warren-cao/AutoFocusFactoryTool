@@ -211,6 +211,10 @@ $originalFiles = 'F:\Project\auto-focus-factory-tool\artifacts\recovery-38519225
 
 如果主发布/GitHub 备份失败导致旧桥接步骤根本没有执行，先收尾主发布，再用同一原构建 run、旧仓、`artifact_kind=bridge` 和 `gitee_release_id=0` 补发缺失的桥接 Release。只有桥接模式允许 ID=0；它仍拒绝覆盖同名 Release，并提前检查新源和 GitHub 主备份都已正式发布。旧桥接已有 Release 时必须填其真实 ID，不能用 0。
 
+一次性在自托管主机执行完整迁移时，可运行 **FocusIR Release (Self-hosted)**，选择 master、`tag=v0.2.1`、`publish=true`、`create_bridge_tag=true`。该选项仅允许此迁移版本，先核对 master 的版本值，再使用工作流自己的临时 `GITHUB_TOKEN` 创建标签，因此不会额外触发云端 tag-push 发布流程；已有标签若指向不同提交则拒绝，不移动或删除它。普通后续发版保持 `create_bridge_tag=false` 并使用已存在的源码标签。
+
+新发布仓的初始化文件模板保存在 `eng/release-repository/README.md`。只能在独立空 Git 仓中提交该模板，不能把源码仓的 Git 历史推到发布仓。
+
 ## 官方参考
 
 - [GitHub Windows 托管节点](https://docs.github.com/en/actions/reference/runners/github-hosted-runners)

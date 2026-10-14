@@ -14,6 +14,11 @@ on:
         required: true
         default: false
         type: boolean
+      create_bridge_tag:
+        description: 'One-time migration: create v0.2.1 from this master commit (requires publish=true)'
+        required: true
+        default: false
+        type: boolean
 
 permissions:
   contents: read
@@ -38,6 +43,7 @@ jobs:
       RELEASE_TAG: ${{ inputs.tag }}
       RELEASE_TOOLING_COMMIT: ${{ github.workflow_sha }}
       PUBLISH_RELEASE: ${{ inputs.publish }}
+      CREATE_BRIDGE_TAG: ${{ inputs.create_bridge_tag }}
       EXPECTED_RUNNER_NAME: DESKTOP-AI3E9IB
       GITEE_REPOSITORY: warren-cao/focusir-workbench-releases
       GITEE_RELEASE_TARGET: ${{ vars.GITEE_RELEASE_TARGET }}
@@ -62,10 +68,40 @@ jobs:
           if ($env:RELEASE_TAG -cnotmatch '^v(0|[1-9]\d*)\.(0|[1-9]\d*)\.(0|[1-9]\d*)$') {
             throw 'Release tag must be a canonical stable vX.Y.Z tag.'
           }
+          if ($env:CREATE_BRIDGE_TAG -eq 'true' -and ($env:RELEASE_TAG -cne 'v0.2.1' -or $env:PUBLISH_RELEASE -ne 'true')) {
+            throw 'Creating a source tag is only allowed for the explicitly approved v0.2.1 migration publication.'
+          }
           if ($env:RUNNER_NAME -ine $env:EXPECTED_RUNNER_NAME) { throw 'Unexpected runner; no build or secrets have been loaded.' }
           if ($PSVersionTable.PSVersion -lt [version]'7.4') { throw 'Install PowerShell 7.4 or later and restart the runner.' }
           if (-not (Get-Command git -ErrorAction SilentlyContinue)) { throw 'Install Git and restart the runner.' }
           Write-Host "Runner: $env:RUNNER_NAME; OS: $env:RUNNER_OS; architecture: $env:RUNNER_ARCH; PowerShell: $($PSVersionTable.PSVersion)"
+
+      - name: Create the explicitly approved migration tag without triggering the cloud release
+        if: env.CREATE_BRIDGE_TAG == 'true'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          $headers = @{ Authorization = "Bearer $env:GH_TOKEN"; Accept = 'application/vnd.github+json'; 'User-Agent' = 'FocusIR-Migration' }
+          $root = "https://api.github.com/repos/$env:GITHUB_REPOSITORY"
+          try {
+            $props = Invoke-RestMethod -Uri "$root/contents/Directory.Build.props?ref=$env:GITHUB_SHA" -Headers $headers -TimeoutSec 60
+            [xml]$xml = [Text.Encoding]::UTF8.GetString([Convert]::FromBase64String($props.content))
+            if ([string]$xml.Project.PropertyGroup.VersionPrefix -cne '0.2.1') { throw 'Source version does not match the approved migration.' }
+            $status = 0
+            $ref = Invoke-RestMethod -Uri "$root/git/ref/tags/$env:RELEASE_TAG" -Headers $headers -SkipHttpErrorCheck -StatusCodeVariable status -TimeoutSec 60
+            if ($status -eq 404) {
+              $body = @{ ref = "refs/tags/$env:RELEASE_TAG"; sha = $env:GITHUB_SHA } | ConvertTo-Json -Compress
+              $ref = Invoke-RestMethod -Method Post -Uri "$root/git/refs" -Headers $headers -ContentType 'application/json' -Body $body -TimeoutSec 60
+            } elseif ($status -ne 200) { throw 'Unable to confirm source tag state.' }
+            $target = $ref.object
+            for ($depth = 0; $target.type -eq 'tag' -and $depth -lt 5; $depth++) {
+              $annotated = Invoke-RestMethod -Uri "$root/git/tags/$($target.sha)" -Headers $headers -TimeoutSec 60
+              $target = $annotated.object
+            }
+            if ($target.type -cne 'commit' -or $target.sha -cne $env:GITHUB_SHA) { throw 'Existing tag points to a different commit; never move it.' }
+            # A tag created by GITHUB_TOKEN does not trigger another push workflow.
+            Write-Host "Approved migration tag verified at $env:GITHUB_SHA. No existing tag was moved."
+          } catch { throw 'Unable to prepare migration source tag. Inspect its actual state before retrying; no force update or deletion is performed.' }
 
       - name: Checkout release tag and complete history
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
