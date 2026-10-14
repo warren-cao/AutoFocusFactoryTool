@@ -35,6 +35,7 @@ jobs:
         shell: pwsh
     env:
       RELEASE_TAG: ${{ inputs.tag || github.ref_name }}
+      RELEASE_TOOLING_COMMIT: ${{ github.workflow_sha }}
       PUBLISH_RELEASE: ${{ github.event_name == 'push' || inputs.publish }}
       GITEE_REPOSITORY: warren-cao/auto-focus-factory-tool
       UPDATE_SIGNING_KEY_ID: focusir-release-2026
@@ -87,7 +88,14 @@ jobs:
         env:
           UPDATE_SIGNING_KEY_PKCS8: ${{ secrets.UPDATE_SIGNING_KEY_PKCS8 }}
         run: |
-          ./eng/release.ps1 -Tag $env:RELEASE_TAG
+          # Use tooling pinned to this workflow's commit, not an old script in the source tag.
+          # Application source, version, changelog and keys still come from RELEASE_TAG.
+          $toolingSpec = '{0}:eng/release.ps1' -f $env:RELEASE_TOOLING_COMMIT
+          $toolingSource = @(git show $toolingSpec)
+          if ($LASTEXITCODE -ne 0) { throw 'Unable to load release tooling from the workflow commit.' }
+          $toolingPath = Join-Path $env:RUNNER_TEMP 'focusir-release.ps1'
+          [IO.File]::WriteAllText($toolingPath, ($toolingSource -join "`n"), [Text.UTF8Encoding]::new($false))
+          & $toolingPath -Tag $env:RELEASE_TAG -SourceDirectory $env:GITHUB_WORKSPACE
 
       - name: Preserve test results and build logs
         if: always()

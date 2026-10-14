@@ -31,6 +31,9 @@ param(
 
     [string]$OutputDirectory,
 
+    # 允许可信工作流中的发布工具构建另一标签的源码，默认仍为当前仓库。
+    [string]$SourceDirectory,
+
     [switch]$SkipCleanCheck,
 
     [switch]$SkipRemoteReleaseCheck
@@ -39,7 +42,12 @@ param(
 Set-StrictMode -Version Latest
 $ErrorActionPreference = 'Stop'
 
-$repositoryRoot = Split-Path -Parent $PSScriptRoot
+$repositoryRoot = if ([string]::IsNullOrWhiteSpace($SourceDirectory)) {
+    Split-Path -Parent $PSScriptRoot
+}
+else {
+    [IO.Path]::GetFullPath($SourceDirectory)
+}
 $solutionPath = Join-Path $repositoryRoot 'FocusIR.Workbench.sln'
 $appProject = Join-Path $repositoryRoot 'tools\FocusIR.Workbench\src\FocusIR.Workbench.App\FocusIR.Workbench.App.csproj'
 $updaterProject = Join-Path $repositoryRoot 'tools\FocusIR.Workbench\src\FocusIR.Workbench.Updater\FocusIR.Workbench.Updater.csproj'
@@ -142,13 +150,28 @@ function Get-GiteeStableReleases {
     for ($page = 1; $page -le 10; $page++) {
         $uri = "https://gitee.com/api/v5/repos/$RepositoryPath/releases?page=$page&per_page=100"
         try {
-            $response = @(Invoke-RestMethod -Method Get -Uri $uri -Headers $headers -TimeoutSec 30)
+            # Invoke-RestMethod 把 JSON 数组作为一个管道对象返回。
+            # 在命令外套 @() 会得到嵌套数组，把 [] 错当成一条 Release。
+            # 直接赋值后再 foreach，才能正确枚举零条、一条及多条记录。
+            $response = Invoke-RestMethod -Method Get -Uri $uri -Headers $headers -TimeoutSec 30
         }
         catch {
             throw "无法读取 Gitee Release 列表，发布已终止：$($_.Exception.Message)"
         }
 
+        if ($null -eq $response -or $response -isnot [Array]) {
+            throw "Gitee 第 $page 页 Release 列表不是 JSON 数组，发布已终止。"
+        }
+
         foreach ($release in $response) {
+            if ($null -eq $release) {
+                throw "Gitee 第 $page 页 Release 列表包含空记录，发布已终止。"
+            }
+            $tagProperty = $release.PSObject.Properties['tag_name']
+            if ($null -eq $tagProperty -or $tagProperty.Value -isnot [string] -or
+                [string]::IsNullOrWhiteSpace($tagProperty.Value)) {
+                throw "Gitee 第 $page 页 Release 记录缺少有效的 tag_name，发布已终止。"
+            }
             $prereleaseProperty = $release.PSObject.Properties['prerelease']
             $draftProperty = $release.PSObject.Properties['draft']
             $isPrerelease = $null -ne $prereleaseProperty -and (ConvertTo-GiteeBoolean $prereleaseProperty.Value)
@@ -422,7 +445,7 @@ try {
         }
     }
 
-    & (Join-Path $PSScriptRoot 'ci.ps1') -SkipCleanCheck
+    & (Join-Path $repositoryRoot 'eng/ci.ps1') -SkipCleanCheck
     if (-not $?) {
         throw 'CI 脚本执行失败。'
     }

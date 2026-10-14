@@ -57,6 +57,10 @@ git -c http.version=HTTP/1.1 -c http.sslBackend=schannel push github v0.2.0
 
 只构建模式仍保留现有发布脚本的版本递增、远端重复版本检查，因此不能用于覆盖已发布版本。测试新工作流可使用尚未发布的版本标签。
 
+发布脚本固定取自本次工作流的提交（`github.workflow_sha`），再通过 `-SourceDirectory` 对选中的版本标签源码构建。这样可以在 master 修复 CI 工具后，手动发布尚未成功发布的旧标签，而不移动标签、改变应用源码或跳过安全检查。版本号、更新日志、验签公钥与编译内容仍全部来自所选标签。
+
+如果旧构建因 `tag_name` 属性错误失败，修复推送后不要只点击旧记录的 Re-run；应在 Actions → FocusIR Release → Run workflow 选择 `master`，tag 仍填 `v0.2.0`，使用包含修复的新工作流。仅在该版本尚未发布时重试；Gitee 与 GitHub 的标签仍须指向相同源码提交。
+
 ## 4. 工作流执行内容
 
 1. 校验严格的三段式稳定标签，以及手动运行的工作流分支。
