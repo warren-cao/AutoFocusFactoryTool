@@ -5,7 +5,7 @@
       "focusir.workbench.application": {
         "type": "Project",
         "dependencies": {
-          "FocusIR.Workbench.Domain": "[1.0.0, )"
+          "FocusIR.Workbench.Domain": "[0.2.0, )"
         }
       },
       "focusir.workbench.domain": {
@@ -14,14 +14,15 @@
       "focusir.workbench.infrastructure": {
         "type": "Project",
         "dependencies": {
-          "FocusIR.Workbench.Application": "[1.0.0, )",
-          "FocusIR.Workbench.Domain": "[1.0.0, )",
-          "FocusIR.Workbench.Protocol": "[1.0.0, )"
+          "FocusIR.Workbench.Application": "[0.2.0, )",
+          "FocusIR.Workbench.Domain": "[0.2.0, )",
+          "FocusIR.Workbench.Protocol": "[0.2.0, )"
         }
       },
       "focusir.workbench.protocol": {
         "type": "Project"
       }
-    }
+    },
+    "net10.0-windows7.0/win-x64": {}
   }
 }

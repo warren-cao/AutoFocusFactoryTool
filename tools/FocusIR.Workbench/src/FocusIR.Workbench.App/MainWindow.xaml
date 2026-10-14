@@ -4,7 +4,16 @@
         xmlns:charts="clr-namespace:FocusIR.Workbench.App.Controls"
         Title="focusIR 自动聚焦工厂工作台" Height="760" Width="1080"
         MinHeight="600" MinWidth="900" Background="{StaticResource CanvasBrush}"
-        WindowStartupLocation="CenterScreen" PreviewKeyDown="Window_PreviewKeyDown">
+        WindowStartupLocation="CenterScreen" PreviewKeyDown="Window_PreviewKeyDown"
+        ContentRendered="Window_ContentRendered">
+    <DockPanel>
+        <Menu DockPanel.Dock="Top" Background="{StaticResource SurfaceBrush}" Padding="12,4"
+              FontFamily="Microsoft YaHei UI">
+            <MenuItem Header="帮助(_H)">
+                <MenuItem Header="检查更新" Click="CheckForUpdates_Click" />
+                <MenuItem Header="关于工作台" Click="AboutWorkbench_Click" />
+            </MenuItem>
+        </Menu>
     <Grid Margin="24">
         <Grid.RowDefinitions>
             <RowDefinition Height="Auto" />
@@ -13,18 +22,13 @@
         </Grid.RowDefinitions>
 
         <DockPanel Grid.Row="0" Margin="0,0,0,18">
+            <Border DockPanel.Dock="Right" Background="#E9EEF2" CornerRadius="14" Padding="12,7"
+                    HorizontalAlignment="Right" VerticalAlignment="Center">
+                <TextBlock Text="{Binding ApplicationBadgeText}" Foreground="#455A68" />
+            </Border>
             <StackPanel>
                 <TextBlock Text="focusIR 工作台" FontSize="25" FontWeight="SemiBold" />
                 <TextBlock Text="设备连接与状态" Foreground="#647582" Margin="0,3,0,0" />
-            </StackPanel>
-            <StackPanel DockPanel.Dock="Right" Orientation="Horizontal" VerticalAlignment="Center">
-                <Button Content="立即停止  (F12)" Click="Stop_Click" IsEnabled="{Binding CanStop}"
-                        Visibility="{Binding StopButtonVisibility}" Background="#A83232" Foreground="White"
-                        FontWeight="SemiBold" Padding="14,9" Margin="0,0,12,0"
-                        ToolTip="发送软件停止请求；请人工确认双轴停稳。" />
-                <Border Background="#E9EEF2" CornerRadius="14" Padding="12,7">
-                    <TextBlock Text="v1 协议 · .NET 10 · Windows x64" Foreground="#455A68" />
-                </Border>
             </StackPanel>
         </DockPanel>
 
@@ -71,6 +75,10 @@
                         <Button Content="刷新状态" Click="RefreshSnapshot_Click" IsEnabled="{Binding CanRefreshSnapshot}" />
                         <Button Content="读取温度" Click="ReadTemperature_Click" IsEnabled="{Binding CanReadTemperature}" />
                     </WrapPanel>
+                    <Button Content="立即停止操作（F12）" Click="Stop_Click" IsEnabled="{Binding CanStop}"
+                            Visibility="{Binding StopButtonVisibility}" Background="#A83232" Foreground="White"
+                            FontWeight="SemiBold" HorizontalAlignment="Left" Margin="0,8,0,0"
+                            ToolTip="立即向设备发送停止请求；请人工确认 ZOOM 和 FOCUS 双轴已停稳。" />
                     <Button Content="{Binding RequestStatusButtonText}" Click="QueryUncertainRequest_Click"
                             IsEnabled="{Binding CanQueryRequestStatus}" HorizontalAlignment="Left" Margin="0,6,0,0"
                             ToolTip="只查询设备记录，不会重发原操作。" />
@@ -365,4 +373,5 @@
             </Border>
         </Grid>
     </Grid>
+    </DockPanel>
 </Window>

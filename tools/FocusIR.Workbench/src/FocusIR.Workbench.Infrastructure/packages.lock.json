@@ -5,7 +5,7 @@
       "focusir.workbench.application": {
         "type": "Project",
         "dependencies": {
-          "FocusIR.Workbench.Domain": "[1.0.0, )"
+          "FocusIR.Workbench.Domain": "[0.2.0, )"
         }
       },
       "focusir.workbench.domain": {
@@ -14,6 +14,7 @@
       "focusir.workbench.protocol": {
         "type": "Project"
       }
-    }
+    },
+    "net10.0/win-x64": {}
   }
 }

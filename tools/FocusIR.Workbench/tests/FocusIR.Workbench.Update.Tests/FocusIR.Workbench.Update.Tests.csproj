@@ -1,0 +1,19 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <TargetFramework>net10.0</TargetFramework>
+    <IsPackable>false</IsPackable>
+    <IsTestProject>true</IsTestProject>
+  </PropertyGroup>
+  <ItemGroup>
+    <PackageReference Include="coverlet.collector" Version="6.0.4">
+      <PrivateAssets>all</PrivateAssets>
+      <IncludeAssets>runtime; build; native; contentfiles; analyzers; buildtransitive</IncludeAssets>
+    </PackageReference>
+    <PackageReference Include="MSTest" Version="4.0.2" />
+  </ItemGroup>
+  <ItemGroup>
+    <ProjectReference Include="..\..\src\FocusIR.Workbench.Domain\FocusIR.Workbench.Domain.csproj" />
+    <ProjectReference Include="..\..\src\FocusIR.Workbench.Application\FocusIR.Workbench.Application.csproj" />
+    <ProjectReference Include="..\..\src\FocusIR.Workbench.Infrastructure\FocusIR.Workbench.Infrastructure.csproj" />
+  </ItemGroup>
+</Project>

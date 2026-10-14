@@ -1,0 +1,50 @@
+version: '1.0'
+name: focusir-workbench-release
+displayName: FocusIR Workbench Release
+# 标签触发正则和 Windows 主机组需在 Gitee 流水线 UI 中绑定，详见 eng/README.md。
+triggers:
+  trigger: manual
+stages:
+  - name: build-sign-package
+    displayName: 构建、签名与打包
+    strategy: naturally
+    trigger: auto
+    executor: []
+    steps:
+      - step: shell@agent
+        name: create-release-artifacts
+        displayName: 生成正式发布附件
+        gitClone: 'true'
+        script: |
+          pwsh -NoProfile -File .\eng\release.ps1 -Tag "${GITEE_BRANCH}"
+        artifacts:
+          - name: FOCUSIR_RELEASE
+            path:
+              - artifacts/release/**
+        notify: []
+        strategy:
+          retry: '0'
+  - name: publish-release
+    displayName: 发布 Gitee Release
+    strategy: naturally
+    trigger: auto
+    executor: []
+    steps:
+      - step: release@gitee
+        name: publish-gitee-release
+        displayName: Gitee Release
+        releaseName: FocusIR Workbench ${GITEE_BRANCH}
+        description: CHANGELOG.md
+        tagName: ${GITEE_BRANCH}
+        upstreamArtifact:
+          - FOCUSIR_RELEASE
+        assertFiles:
+          - artifacts/release/FocusIR.Workbench-${GITEE_BRANCH}-win-x64.zip
+          - artifacts/release/update-manifest.json
+          - artifacts/release/update-manifest.sig
+          - artifacts/release/SHA256SUMS.txt
+        prerelease: false
+        allowUpdate: false
+        notify: []
+        strategy:
+          retry: '0'

@@ -12,6 +12,12 @@ Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "FocusIR.Workbench.Infrastru
 EndProject
 Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "FocusIR.Workbench.App", "tools\FocusIR.Workbench\src\FocusIR.Workbench.App\FocusIR.Workbench.App.csproj", "{BF5E48C4-A542-428C-8C50-1CB2A2174E6C}"
 EndProject
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "FocusIR.Workbench.Updater", "tools\FocusIR.Workbench\src\FocusIR.Workbench.Updater\FocusIR.Workbench.Updater.csproj", "{D51A4F3A-71D6-4E6F-AE15-4A29D4B2C001}"
+EndProject
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "FocusIR.Workbench.Update.Tests", "tools\FocusIR.Workbench\tests\FocusIR.Workbench.Update.Tests\FocusIR.Workbench.Update.Tests.csproj", "{A9C2B772-F889-4FBF-B361-1FE2B679C002}"
+EndProject
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "FocusIR.Workbench.Updater.Tests", "tools\FocusIR.Workbench\tests\FocusIR.Workbench.Updater.Tests\FocusIR.Workbench.Updater.Tests.csproj", "{B762F3B4-E613-4C97-B7BE-6D217112C003}"
+EndProject
 Global
 	GlobalSection(SolutionConfigurationPlatforms) = preSolution
 		Debug|Any CPU = Debug|Any CPU
@@ -38,6 +44,18 @@ Global
 		{BF5E48C4-A542-428C-8C50-1CB2A2174E6C}.Debug|Any CPU.Build.0 = Debug|Any CPU
 		{BF5E48C4-A542-428C-8C50-1CB2A2174E6C}.Release|Any CPU.ActiveCfg = Release|Any CPU
 		{BF5E48C4-A542-428C-8C50-1CB2A2174E6C}.Release|Any CPU.Build.0 = Release|Any CPU
+		{D51A4F3A-71D6-4E6F-AE15-4A29D4B2C001}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
+		{D51A4F3A-71D6-4E6F-AE15-4A29D4B2C001}.Debug|Any CPU.Build.0 = Debug|Any CPU
+		{D51A4F3A-71D6-4E6F-AE15-4A29D4B2C001}.Release|Any CPU.ActiveCfg = Release|Any CPU
+		{D51A4F3A-71D6-4E6F-AE15-4A29D4B2C001}.Release|Any CPU.Build.0 = Release|Any CPU
+		{A9C2B772-F889-4FBF-B361-1FE2B679C002}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
+		{A9C2B772-F889-4FBF-B361-1FE2B679C002}.Debug|Any CPU.Build.0 = Debug|Any CPU
+		{A9C2B772-F889-4FBF-B361-1FE2B679C002}.Release|Any CPU.ActiveCfg = Release|Any CPU
+		{A9C2B772-F889-4FBF-B361-1FE2B679C002}.Release|Any CPU.Build.0 = Release|Any CPU
+		{B762F3B4-E613-4C97-B7BE-6D217112C003}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
+		{B762F3B4-E613-4C97-B7BE-6D217112C003}.Debug|Any CPU.Build.0 = Debug|Any CPU
+		{B762F3B4-E613-4C97-B7BE-6D217112C003}.Release|Any CPU.ActiveCfg = Release|Any CPU
+		{B762F3B4-E613-4C97-B7BE-6D217112C003}.Release|Any CPU.Build.0 = Release|Any CPU
 	EndGlobalSection
 	GlobalSection(SolutionProperties) = preSolution
 		HideSolutionNode = FALSE

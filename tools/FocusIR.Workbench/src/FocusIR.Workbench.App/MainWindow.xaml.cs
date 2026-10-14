@@ -7,6 +7,8 @@ namespace FocusIR.Workbench.App;
 public partial class MainWindow : Window
 {
     private readonly MainViewModel _viewModel;
+    private UpdateWindow? _updateWindow;
+    private bool _startupUpdateCheckScheduled;
 
     public MainWindow()
     {
@@ -74,6 +76,35 @@ public partial class MainWindow : Window
             return;
         e.Handled = true;
         await _viewModel.StopAllAsync();
+    }
+
+    private async void Window_ContentRendered(object? sender, EventArgs e)
+    {
+        if (_startupUpdateCheckScheduled)
+            return;
+        _startupUpdateCheckScheduled = true;
+        await UpdateHealthReporter.TryReportHealthyAsync();
+        await Task.Delay(TimeSpan.FromSeconds(5));
+        if (IsLoaded)
+            await _viewModel.CheckForUpdatesAsync(manualCheck: false);
+    }
+
+    private void CheckForUpdates_Click(object sender, RoutedEventArgs e)
+    {
+        if (_updateWindow is not null)
+        {
+            _updateWindow.Activate();
+            return;
+        }
+
+        _updateWindow = new UpdateWindow(_viewModel) { Owner = this };
+        _updateWindow.Closed += (_, _) => _updateWindow = null;
+        _updateWindow.Show();
+    }
+
+    private void AboutWorkbench_Click(object sender, RoutedEventArgs e)
+    {
+        new AboutWindow { Owner = this }.ShowDialog();
     }
 
     private string PortBoxText() => ((MainViewModel)DataContext).Port;

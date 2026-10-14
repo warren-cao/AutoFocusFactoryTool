@@ -1,0 +1,31 @@
+version: '1.0'
+name: focusir-workbench-ci
+displayName: FocusIR Workbench CI
+triggers:
+  trigger: auto
+  push:
+    branches:
+      precise:
+        - master
+stages:
+  - name: build-and-test
+    displayName: 编译与纯软件测试
+    strategy: naturally
+    trigger: auto
+    executor: []
+    steps:
+      # 首次导入后，在 Gitee UI 中为本任务绑定专用 Windows x64 主机组。
+      - step: shell@agent
+        name: run-ci
+        displayName: .NET 10 CI
+        gitClone: 'true'
+        script: |
+          pwsh -NoProfile -File .\eng\ci.ps1
+        artifacts:
+          - name: FOCUSIR_CI_RESULTS
+            path:
+              - artifacts/test-results/**
+              - artifacts/build/**
+        notify: []
+        strategy:
+          retry: '0'

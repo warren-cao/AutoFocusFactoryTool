@@ -128,6 +128,7 @@ public sealed partial class MainViewModel : INotifyPropertyChanged, IAsyncDispos
 
     public MainViewModel()
     {
+        _updateService = CreateUpdateService();
         Charts.SaveCurveRequested = SaveEditedCurveAsync;
         Charts.PropertyChanged += (_, args) => { if(args.PropertyName==nameof(Charts.IsEditing)) RefreshOperationProperties(); };
         _connection.StateChanged += state => OnUi(() =>
@@ -432,7 +433,7 @@ public sealed partial class MainViewModel : INotifyPropertyChanged, IAsyncDispos
         OnPropertyChanged(nameof(CanDisconnect));
         try
         {
-            var settings = new ConnectionSettings(host.Trim(), port, ProtocolLimits.WorkbenchTag, GetStableClientId(), "FocusIR.Workbench", "0.1.0");
+            var settings = new ConnectionSettings(host.Trim(), port, ProtocolLimits.WorkbenchTag, GetStableClientId(), "FocusIR.Workbench", AppVersion.Current);
             var summary = await _connection.ConnectAsync(settings);
             _device = summary;
             _statusNotice = summary.ConnectionNotice;
@@ -2256,6 +2257,7 @@ public sealed partial class MainViewModel : INotifyPropertyChanged, IAsyncDispos
         OnPropertyChanged(nameof(FaultStatus));
         OnPropertyChanged(nameof(AutofocusReadinessText));
         OnPropertyChanged(nameof(AutofocusResultText));
+        RefreshUpdateProperties();
     }
 
     private void AddActivity(string message)
@@ -2277,10 +2279,13 @@ public sealed partial class MainViewModel : INotifyPropertyChanged, IAsyncDispos
     {
         if (Interlocked.Exchange(ref _disposed, 1) != 0) return;
         _snapshotAgeTimer.Stop();
+        _updateCancellation?.Cancel();
 
         await StopTaskMonitorAsync();
         Charts.Dispose();
         await _connection.DisposeAsync();
+        _updateCancellation?.Dispose();
+        _updateHttpClient.Dispose();
         _taskRefreshNotifications.Writer.TryComplete();
     }
 }
