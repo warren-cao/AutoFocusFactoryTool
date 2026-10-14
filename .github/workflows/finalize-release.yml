@@ -32,6 +32,21 @@ on:
         options:
           - release
           - bridge
+      github_release_id:
+        description: 'Existing GitHub draft ID to resume; 0 requires no existing GitHub release'
+        required: true
+        default: '0'
+        type: string
+      github_failed_asset_id:
+        description: 'Only an explicitly inspected failed ZIP starter asset ID may be discarded; 0 keeps everything'
+        required: true
+        default: '0'
+        type: string
+      use_local_backup:
+        description: 'Use the verified original run backup on DESKTOP-AI3E9IB instead of downloading again'
+        required: true
+        default: false
+        type: boolean
       publish:
         description: 'Finalize Gitee and publish GitHub (false = original artifact validation only)'
         required: true
@@ -64,6 +79,9 @@ jobs:
       RELEASE_TOOLING_COMMIT: ${{ github.workflow_sha }}
       GITEE_REPOSITORY: ${{ inputs.gitee_repository }}
       ARTIFACT_KIND: ${{ inputs.artifact_kind }}
+      EXISTING_GITHUB_RELEASE_ID: ${{ inputs.github_release_id }}
+      FAILED_GITHUB_ASSET_ID: ${{ inputs.github_failed_asset_id }}
+      USE_LOCAL_BACKUP: ${{ inputs.use_local_backup }}
 
     steps:
       - name: Validate trusted recovery request
@@ -73,6 +91,8 @@ jobs:
           if ($env:GITEE_REPOSITORY -notin @('warren-cao/auto-focus-factory-tool', 'warren-cao/focusir-workbench-releases') -or
               $env:ARTIFACT_KIND -notin @('release', 'bridge')) { throw 'Unknown repository or artifact kind.' }
           if ($env:SOURCE_RUN_ID -cnotmatch '^[1-9]\d{0,17}$' -or $env:GITEE_RELEASE_ID -cnotmatch '^(0|[1-9]\d{0,17})$') { throw 'Invalid run or release ID.' }
+          if ($env:EXISTING_GITHUB_RELEASE_ID -cnotmatch '^(0|[1-9]\d{0,17})$') { throw 'Invalid GitHub release ID.' }
+          if ($env:FAILED_GITHUB_ASSET_ID -cnotmatch '^(0|[1-9]\d{0,17})$') { throw 'Invalid failed upload asset ID.' }
           if ($env:GITEE_RELEASE_ID -eq '0' -and $env:ARTIFACT_KIND -ne 'bridge') { throw 'Only an explicitly selected missing bridge may use Release ID 0.' }
           if ($env:ARTIFACT_KIND -eq 'bridge' -and ($env:RELEASE_TAG -cne 'v0.2.1' -or $env:GITEE_REPOSITORY -cne 'warren-cao/auto-focus-factory-tool')) { throw 'The migration bridge must target the legacy repository at v0.2.1.' }
 
@@ -118,6 +138,7 @@ jobs:
           } catch { throw 'Unable to verify original artifact provenance. Do not rebuild or substitute another artifact.' }
 
       - name: Download the original immutable artifact
+        if: env.USE_LOCAL_BACKUP != 'true'
         uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
         with:
           artifact-ids: ${{ steps.original.outputs.artifact_id }}
@@ -126,6 +147,22 @@ jobs:
           path: artifacts/recovery
           merge-multiple: true
           digest-mismatch: error
+
+      - name: Copy the explicitly selected original run backup
+        if: env.USE_LOCAL_BACKUP == 'true'
+        run: |
+          # Only the fixed project backup root and validated tag/run/kind can be selected.
+          # No arbitrary path input, private key or credential is read here.
+          $part = if ($env:ARTIFACT_KIND -eq 'bridge') { 'bridge-release' } else { 'release' }
+          $runDirectory = "migration-$env:RELEASE_TAG-$env:SOURCE_RUN_ID"
+          $source = Join-Path 'F:/Project/auto-focus-factory-tool/artifacts' "$runDirectory/$part"
+          $destination = Join-Path $env:GITHUB_WORKSPACE 'artifacts/recovery'
+          if (-not (Test-Path -LiteralPath $source -PathType Container)) { throw 'Original local backup is unavailable; use the immutable GitHub artifact instead.' }
+          if (Test-Path -LiteralPath $destination) { throw 'Recovery directory already exists; refusing to overwrite.' }
+          $null = [IO.Directory]::CreateDirectory($destination)
+          foreach ($name in @("FocusIR.Workbench-$env:RELEASE_TAG-win-x64.zip", 'update-manifest.json', 'update-manifest.sig', 'SHA256SUMS.txt')) {
+            Copy-Item -LiteralPath (Join-Path $source $name) -Destination (Join-Path $destination $name)
+          }
 
       - name: Verify original signature and exact remote files
         run: |
@@ -165,7 +202,7 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
-          & "$env:FOCUSIR_TOOLING/Publish-GitHubRelease.ps1" -Tag $env:RELEASE_TAG -SourceDirectory $env:GITHUB_WORKSPACE -ArtifactDirectory artifacts/recovery
+          & "$env:FOCUSIR_TOOLING/Publish-GitHubRelease.ps1" -Tag $env:RELEASE_TAG -ExistingReleaseId $env:EXISTING_GITHUB_RELEASE_ID -FailedUploadAssetId $env:FAILED_GITHUB_ASSET_ID -SourceDirectory $env:GITHUB_WORKSPACE -ArtifactDirectory artifacts/recovery
 
       - name: Preserve recovery diagnostics
         if: always()
