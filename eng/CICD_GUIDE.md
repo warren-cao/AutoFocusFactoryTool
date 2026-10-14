@@ -4,6 +4,8 @@
 
 执行顺序：推送代码 → 配置 Windows 节点和发布凭证 → 手动通过 CI → 开启标签触发 → 推送 `v0.2.0` → 检查四个附件 → 工位安装基线。
 
+正式发布优先导入 `.workflow/focusir-workbench-release.yml`，它使用本工程的 Windows 构建、测试、签名打包与 Gitee Release 流程。原 `.workflow/流水线-202610131538.yml` 为不适用于本工程的 Maven 示例，不应启用。`.gitee/release-pipeline.yml` 作为较简模板保留；两者只能选择一条启用正式发布，避免同标签重复执行。
+
 仓库中的 YAML 是任务模板。提交文件不会自动完成租户内的主机、凭证、代码源、触发规则或制品传递配置；这些设置需要在 Gitee 流水线页面保存。下面的界面名称以 Gitee 官方文档为依据，实际入口可能随账号版本有所不同。
 
 ## 1. 推送已提交代码
@@ -89,16 +91,27 @@ exit /b %ERRORLEVEL%
 
 ## 5. 配置 Release 流水线
 
-创建 `FocusIR Workbench Release`，导入 `.gitee/release-pipeline.yml`。
+创建 `FocusIR Workbench Release`，导入 `.workflow/focusir-workbench-release.yml`。
 
-**模板默认手动触发，必须在 UI 改成标签推送触发**，并设置正则 `^v\d+\.\d+\.\d+$`。不要配置每次 `master` 推送都发布。限制发布标签创建权限；账号提供保护标签能力时，保护 `v*`。
+**模板默认手动触发。需要自动发布时，在 UI 改成标签推送触发**，并设置正则 `^v\d+\.\d+\.\d+$`。不要配置每次 `master` 推送都发布。限制发布标签创建权限；账号提供保护标签能力时，保护 `v*`。
+
+也可保留手动发布：先推送版本标签，在运行页面选择对应标签，并核对 `${GITEE_BRANCH}` 的实际值。构建脚本仍执行完整版本检查。默认 `hostGroupID.ID` 为空，必须在 Gitee 任务界面选择自己的 Windows 主机组；不能使用示例 ID。
 
 第一阶段“构建、签名与打包”配置：
 
 - Windows 节点、完整克隆/标签检出、机密环境变量。
 - 命令：`pwsh -NoProfile -File .\eng\release.ps1 -Tag "${GITEE_BRANCH}"`。
+- 新文件中的 `script` 包含 PowerShell 的 Windows/凭证检查，任务脚本类型应选 PowerShell。若主机只能使用 Bat，把整段脚本替换为下述命令；不要将 PowerShell 原文交给 cmd 执行：
+
+```bat
+pwsh -NoProfile -File .\eng\release.ps1 -Tag "${GITEE_BRANCH}"
+exit /b %ERRORLEVEL%
+```
+
+- 新文件不写入任何私钥；`UPDATE_SIGNING_KEY_PKCS8` 必须通过平台的加密环境变量注入。
 - `${GITEE_BRANCH}` 需在当前租户的标签事件中实际解析为 `v0.2.0`。用平台变量选择器核对；若提供其他标签变量，修改任务及下一阶段全部引用，不能传 `master` 或 `refs/tags/v0.2.0`。
 - 构建制品标识 `FOCUSIR_RELEASE`，路径 `artifacts/release/**`。
+- 诊断制品标识 `FOCUSIR_RELEASE_DIAGNOSTICS`，收集 `artifacts/test-results/**` 和 `artifacts/build/**`。
 - 每次运行使用新的工作区或新的空发布输出目录。脚本拒绝向已有非空 `artifacts/release` 写入；保留失败制品后，使用新工作区重试。
 
 第二阶段“发布 Gitee Release”配置：

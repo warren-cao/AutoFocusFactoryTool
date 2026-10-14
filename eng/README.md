@@ -55,6 +55,8 @@ ZIP 根目录直接包含 `FocusIR.Workbench.exe`，更新器位于 `launcher/Fo
 
 ## Gitee 流水线接入
 
+正式发布优先使用 [`.workflow/focusir-workbench-release.yml`](../.workflow/focusir-workbench-release.yml)，按指南绑定自己的 Windows 主机组、脚本类型和加密变量后运行。原 `.workflow/流水线-202610131538.yml` 是 Maven 部署示例，不适用于本工程。新文件默认手动选择版本标签发布，也可在 UI 中启用标签自动触发；正式发布只启用一条流水线。
+
 `.gitee/pipeline.yml` 和 `.gitee/release-pipeline.yml` 是 Gitee Go 任务模板。由于 Windows 自有主机组 ID、主机 ID和脚本类型由 Gitee 租户生成，不能安全地硬编码在仓库中；首次导入模板后必须在流水线 UI 中完成以下绑定：
 
 1. 为两个 `shell@agent` 任务选择专用 Windows x64 主机组；节点需安装 Git、PowerShell 7 和 `global.json` 可接受的 .NET 10 SDK，且能访问 NuGet 或企业镜像。Gitee 官方目前说明 PowerShell 脚本类型仅支持阿里云导入主机，其他 Windows 主机需在界面确认支持 Bat 并用 Bat 调用 `pwsh`；必须先手动验证节点执行能力，具体步骤见完整指南。
