@@ -2,9 +2,12 @@
 
 支持两条发布路径：GitHub 云端 Windows 节点，或自托管 Windows 节点 `DESKTOP-AI3E9IB`。两者均向 Gitee 发布正式升级包，并把相同的四个文件发布到 GitHub Releases，无需 Gitee 企业版。
 
+当前结构：**GitHub 是唯一源码仓（可以私有），Gitee 是公开的二进制发布仓。**不再向 Gitee 推送应用源码、master 或源码标签；Gitee 只需保留一个发布说明 README 提交，Release 标签由 API 在该仓库的锚点提交上创建。两个平台的同名版本标签不再要求提交 SHA 相同，应用源码版本始终由 GitHub 标签确定。
+
 - GitHub 仓库：<https://github.com/warren-cao/AutoFocusFactoryTool>
 - 云端工作流：`.github/workflows/release.yml`
 - 自托管工作流：`.github/workflows/release-self-hosted.yml`（仅手动触发）
+- 原制品收尾工作流：`.github/workflows/finalize-release.yml`（仅手动触发，不编译）
 - 上位机升级源：<https://gitee.com/warren-cao/auto-focus-factory-tool/releases>
 
 ## 1. 一次性配置 Secrets
@@ -14,7 +17,7 @@
 | Secret | 内容 |
 | --- | --- |
 | `UPDATE_SIGNING_KEY_PKCS8` | 现有 `artifacts/signing/update-signing-key.pkcs8.b64` 的完整文本，须与 `eng/keys/focusir-release-2026.pem` 配对 |
-| `GITEE_TOKEN` | Gitee 私人令牌，令牌账号须具有目标仓库的源码读取、Release 创建/修改和附件上传权限 |
+| `GITEE_TOKEN` | Gitee 私人令牌，令牌账号须具有公开发布仓的元数据读取、Release 创建/修改和附件上传权限；不需要访问 GitHub 源码 |
 
 Gitee 令牌在 <https://gitee.com/profile/personal_access_tokens> 创建。不要用 GitHub Token 代替。私钥不需要重新生成，也不要提交到仓库；只在平台的机密字段粘贴其值。
 
@@ -22,21 +25,19 @@ Gitee 令牌在 <https://gitee.com/profile/personal_access_tokens> 创建。不�
 
 ## 2. 准备源码和版本标签
 
-GitHub 构建的提交必须已经同步到 Gitee；Gitee Release 需要关联实际存在的源码提交。工作流会提前通过 Gitee API 核对，缺失时立即停止。工作流不会自动改写 Gitee 的 master。
+GitHub 保存完整源码、master 和版本标签。Gitee 发布仓必须公开，并已有至少一个 README 初始化提交；可以没有任何应用源码。脚本自动读取 Gitee 默认分支作为发布锚点，也可通过仓库 Actions Variable `GITEE_RELEASE_TARGET` 指定该发布仓里的分支/提交。不能把 GitHub 源码 SHA 填入这个变量。
 
-以首版 `v0.2.0` 为例，先确认本次工作流提交已在两个仓库，版本文件为 `0.2.0` 且更新日志有 `[0.2.0]`，随后运行：
+版本文件和更新日志必须匹配待发布版本，然后只向 GitHub 推送。例如（`v0.2.0` 标签已存在时不要重复创建，也不要移动）：
 
 ```powershell
 Set-Location F:\Project\auto-focus-factory-tool
 git status --short
-git push origin master
 git push github master
 git tag -a v0.2.0 -m "FocusIR Workbench v0.2.0"
-git push origin v0.2.0
 git push github v0.2.0
 ```
 
-最后一条命令触发 GitHub Actions。必须先推送 Gitee，后推送 GitHub 的标签。不要先创建同名 Gitee Release。
+最后一条命令触发云端 GitHub Actions。**不要再运行 `git push origin master` 或 `git push origin --tags`：当前本地 `origin` 仍指向 Gitee。**本文没有自动修改你的 Git remote；使用显式的 `github` 远端，或由维护者确认后把 GitHub 调整为默认远端。不要预先创建同名 Gitee Release。
 
 本机此前已确认 GitHub 连接需要 HTTP/1.1 时，可把相关 push 改为：
 
@@ -45,7 +46,7 @@ git -c http.version=HTTP/1.1 -c http.sslBackend=schannel push github master
 git -c http.version=HTTP/1.1 -c http.sslBackend=schannel push github v0.2.0
 ```
 
-后续版本先更新 `Directory.Build.props`、`CHANGELOG.md`，执行 `dotnet restore .\FocusIR.Workbench.sln --force-evaluate` 并检查提交相应锁文件，然后重复同步和标签流程。已发布标签不能重新指向另一提交。
+后续版本先更新 `Directory.Build.props`、`CHANGELOG.md`，执行 `dotnet restore .\FocusIR.Workbench.sln --force-evaluate` 并检查提交相应锁文件，然后仅在 GitHub 提交、推送和打标签。已发布的 GitHub 源码标签不能重新指向另一提交。
 
 ## 3. 手动运行与只构建模式
 
@@ -60,14 +61,14 @@ git -c http.version=HTTP/1.1 -c http.sslBackend=schannel push github v0.2.0
 
 构建脚本及两个平台的上传脚本均固定取自本次工作流的提交（`github.workflow_sha`），再通过 `-SourceDirectory` 对选中的版本标签源码构建和验签。工具位于 runner 临时目录，不污染源码工作区。这样可以在 master 修复 CI 工具后，手动发布尚未成功发布的旧标签，而不移动标签、改变应用源码或跳过安全检查。版本号、更新日志、验签公钥与编译内容仍全部来自所选标签。
 
-如果旧构建因 `tag_name` 属性错误失败，修复推送后不要只点击旧记录的 Re-run；应在 Actions → FocusIR Release → Run workflow 选择 `master`，tag 仍填 `v0.2.0`，使用包含修复的新工作流。仅在该版本尚未发布时重试；Gitee 与 GitHub 的标签仍须指向相同源码提交。
+如果旧构建因工具脚本错误失败，修复推送后不要只点击旧记录的 Re-run；应在 Actions → FocusIR Release → Run workflow 选择 `master`，使用包含修复的新工作流。只有没有遗留 Release 时才重新走完整发布；已有附件时按下文的显式收尾流程处理。
 
 ## 4. 工作流执行内容
 
 1. 校验严格的三段式稳定标签，以及手动运行的工作流分支。
 2. 完整检出标签与所有历史，确认提交属于 `origin/master`。
 3. 在 `windows-2025` 安装符合 `global.json` 的 .NET 10 SDK，按锁文件缓存 NuGet 包。
-4. 正式发布模式检查 Gitee 源码提交已存在、目标 Release 未发布。
+4. 正式发布模式检查 Gitee 发布仓公开、README 锚点提交有效、目标 Release 未发布；不读取或同步 Gitee 应用源码。
 5. 调用 `eng/release.ps1`，执行锁定还原、Release 警告即错误编译、现有纯软件测试、两程序自包含发布、ZIP 打包与 ECDSA 签名。
 6. 上传诊断制品（14 天）和签名升级包制品（30 天），仅收集指定目录，不上传私钥。
 7. 调用 `eng/Publish-GiteeRelease.ps1`，复核四个文件的签名和摘要，先创建预发布 Release，再逐个上传 ZIP、签名、摘要和清单；确认附件列表完整后转为正式版。
@@ -86,17 +87,18 @@ update-manifest.sig
 SHA256SUMS.txt
 ```
 
-上位机仍从 Gitee 查询和下载升级。GitHub Release 作为同一产物的额外下载入口，不会自动改变客户端更新地址。
+上位机仍匿名从公开 Gitee 查询和下载升级，不访问 GitHub。GitHub Release 仅作为维护者的同一产物备份：GitHub 仓库改为私有后，其 Release 和附件也不再是公开下载入口，但不会影响 Gitee 升级。
 
 Actions 页面始终尝试归档测试结果和 MSBuild 日志；构建、测试、签名或成品校验失败时，不会进入发版步骤。首版工位安装和真实设备人工验收步骤见 [CI/CD 执行指南](CICD_GUIDE.md)。
 
 ## 6. 重试与故障处理
 
 - **缺少 Secret：**完成第 1 节配置后重新运行；不要把私钥或令牌写入日志排查。
-- **Gitee 无对应源码：**先向 Gitee 推送同一提交和标签，再重新运行。
+- **Gitee 无有效锚点：**在发布仓创建仅含 README 的初始化提交，核对默认分支或 `GITEE_RELEASE_TARGET`。不要推送 GitHub 源码解决。
 - **Gitee 返回 401/403：**核对令牌有效性、目标仓库和 Release/附件权限；公开仓库能读不代表令牌有写权限。
 - **Gitee 上传中断：**已创建的版本保持预发布；不要启用原 Gitee Go 发布任务并行覆盖。先检查残留版本和附件，确认未作为正式版分发，再人工移除本次不完整预发布记录，或修复后发布更高版本。脚本不会自动删除远端记录。
-- **Gitee 成功、GitHub 镜像失败：**Gitee 已是有效发布，不能重跑整条流程来覆盖它。下载这次 Actions 的签名制品，使用 `gh release create` 手动补发同一 GitHub 标签及四个文件。不要重新编译同一版本来替换原产物。
+- **Gitee 附件完整、转正式版 HTTP 400：**这不代表 GitHub 上传失败。GitHub 步骤会被跳过；旧脚本 PATCH 缺少 Gitee 必填的 `tag_name`、`name`、`body`。新版已补齐，使用下文 `FinalizeExisting` 对同一批原始制品收尾，禁止重新打包或覆盖附件。
+- **Gitee 成功、GitHub 镜像失败：**Gitee 已是有效发布，不能重跑整条流程来覆盖它。下载原始签名制品，只调用 `Publish-GitHubRelease.ps1` 补发。若 GitHub 已存在草稿，该脚本仍会拒绝覆盖，先人工核对草稿及附件，不自动删除。
 - **附件超出账号额度：**核对 Gitee 当前附件限制。已有发布脚本使用压缩单文件更新器和简体中文资源；不在工作流里偷偷更换客户端更新源。
 - **重复版本被拒绝：**这是正式发布的保护行为；正常修复使用更高版本，不移动标签。
 
@@ -125,29 +127,73 @@ Gitee 发布上传脚本还提供 `-Mode Validate`，可对已有 `artifacts/rel
 
 正式发布时，再手动运行同一工作流并选择 **publish=true**，执行完整 Gitee 和 GitHub 发布。
 
-**已有预发布不能直接重发：**之前失败留下的 `v0.2.0` 预发布（Release `1204184`）必须先由维护者检查是否仍为预发布、附件是否完整、是否曾被分发。确认可清理后人工删除该不完整 Release 记录（保留原标签），或准备更高的新版本。脚本不会自动删除、覆盖或续传现有 Release；不要绕过这个检查。对已正式分发的版本，必须发布更高版本。
+**已有预发布不能直接重发：**先核对状态和附件。四个附件均已上传的版本，使用下文收尾模式保留原始文件；缺失附件的版本先人工处理，或准备更高版本。脚本不会自动删除、覆盖或续传现有 Release。对已正式分发的版本，必须发布更高版本。
 
 云端和自托管工作流共用 `focusir-stable-release` 并发锁。标签 push 仍触发原云端流程；自托管方案仅手动触发。新版本如需只在自托管构建，先推送并等待自动云端流程结束，或事先在 Actions 页面停用云端工作流；不要让两个流程争相发布同一标签。
 
 ## 8. 查看 Gitee 上传诊断
 
-`eng/Publish-GiteeRelease.ps1` 的 `CheckRemote`、`Diagnose`、`Publish` 模式都会在 `artifacts/release-logs/gitee-*.jsonl` 留下结构化日志，同时显示在 Actions 输出中。两个工作流都在最后以 `always()` 收集这些日志，所以上传失败时仍能下载。
+`eng/Publish-GiteeRelease.ps1` 的联网模式都会在 `artifacts/release-logs/gitee-*.jsonl` 留下结构化日志，同时显示在 Actions 输出中。两个工作流都在最后以 `always()` 收集这些日志，所以上传失败时仍能下载。
 
 - `session`：模式、标签、runner 名称、PowerShell 版本、请求超时，以及是否设置了代理环境变量。仅记录代理是否配置，不记录代理地址；未设置环境变量不代表系统没有代理。
-- `request-start`：请求 ID、HTTP 方法、无查询参数的 API 路径、附件名称、文件字节数和请求长度。
+- `request-start`：请求 ID、HTTP 方法、无查询参数的 API 路径、附件名称、文件字节数和请求长度；`bodyFields` 仅列出非凭据字段名，不记录值。
 - `upload-progress`：每约 15 秒记录已写入传输流的字节数和耗时。`waitingForResponse=true` 表示文件字节已经写入流，**不代表服务端已完整接收、持久化或创建附件**。
 - `request-response`：HTTP 状态码、总耗时和上传计数。401/403 优先核对凭证及权限，413 核对体积限制，429 核对频率限制，5xx 核对服务端情况。
 - `request-error`：超时/取消或传输错误分类、异常链类型、HRESULT，以及可用的 `HttpRequestError`、Socket 错误码；不输出原始异常消息、堆栈、请求头、正文、Token、私钥或代理凭据。
 - `response-parse-error`：服务端返回了无法解析的 JSON，保留请求 ID，但不输出原始正文。
 - `existing-release`：只读诊断查询到的已有 Release ID、预发布状态和附件数量。
+- `release-provenance`：GitHub 源码 SHA 与 Gitee 发布仓锚点 SHA，二者用途不同，不要求相同。
+- `remote-artifact-verified`：收尾时匿名重新读取远端附件，确认字节数和 SHA-256 与原始签名制品完全相同。
 
 默认每个 HTTP 请求仍为 **15 分钟**，可通过 `-RequestTimeoutMinutes` 显式调整（1–120 分钟）；只延长超时不是链路问题的修复。发生超时时先核对附件实际状态，再决定人工处理，不自动重试可能产生重复附件的 POST。
 
-只读诊断命令（需要本地进程已安全设置 `GITEE_TOKEN`，不要把其值写进命令历史）：
+公开仓只读诊断可以匿名执行；其他联网模式需要通过安全机制设置 `GITEE_TOKEN`，不要把其值写进命令历史：
 
 ```powershell
 ./eng/Publish-GiteeRelease.ps1 -Tag v0.2.0 -TargetCommit (git rev-parse 'v0.2.0^{}') -Mode Diagnose
 ```
+
+## 9. 保留原制品完成这次 v0.2.0 发布
+
+本次失败发生在运行 `38519225911`：四个附件已上传到 Gitee Release `1204616`，但转正式版返回 400，GitHub 步骤为 `skipped`。不要重跑完整构建、删除附件或创建第二个同名 Release。
+
+**推荐直接使用 Actions，无需在本机输入令牌：**
+
+1. 把修复推送到 GitHub master 后，Actions → **FocusIR Finalize Existing Release** → Run workflow。
+2. 分支选 `master`，`tag=v0.2.0`，`source_run_id=38519225911`，`gitee_release_id=1204616`。
+3. 可先保留 `publish=false`，验证原运行来源、制品完整性、签名，并匿名下载 Gitee 四个附件比对哈希，不修改任何远端发布。
+4. 确认后同样输入选择 `publish=true`：使用原运行中的不可变制品，完整校验远端附件后只补做 Gitee 转正式版，再上传同样四个文件到 GitHub。使用现有 Secrets 和临时 GitHub Token，无需新增 PAT、SDK 或签名私钥。
+5. 不要从原失败记录点击 Re-run；旧记录仍使用旧工具。新工作流也不自动删除或覆盖 GitHub 已有草稿。
+
+也可以由维护者手动执行：
+
+1. 从该次运行下载 `focusir-self-hosted-release-v0.2.0-1` 制品。
+2. 只解开 Actions 制品的外层 ZIP，确保目录直接包含四个原始文件；不要解开里面的程序 ZIP，更不要重新生成签名/清单。
+3. 使用 GitHub master 上最新的两个上传脚本。让 `GITEE_TOKEN` 和 `GH_TOKEN` 通过安全机制注入当前进程环境，不在命令中写明令牌；本机 `GH_TOKEN` 需要目标源码仓的 contents 写权限，Actions 的临时 token 不能在本机凭空复用。
+4. 先显式收尾，再只补发 GitHub：
+
+```powershell
+$originalFiles = 'F:\Project\auto-focus-factory-tool\artifacts\recovery-38519225911'
+./eng/Publish-GiteeRelease.ps1 -Tag v0.2.0 -SourceCommit (git rev-parse 'v0.2.0^{}') -Mode FinalizeExisting -ReleaseId 1204616 -ArtifactDirectory $originalFiles
+# 仅在上一条成功后继续；不再调用构建脚本或普通 Publish 模式。
+./eng/Publish-GitHubRelease.ps1 -Tag v0.2.0 -Repository warren-cao/AutoFocusFactoryTool -ArtifactDirectory $originalFiles
+```
+
+收尾先校验原始四个文件的签名和哈希，再核对指定 Release ID、标签、四个远端附件的名字/长度，并匿名下载所有远端附件流式比对 SHA-256。只有完全一致才补齐必填元数据、将同一 Release 转正式版；不创建 Release，不重新上传或替换附件。若它已是正式版，则仅复核、不修改。网络异常、内容不符或 ID 不符均停止；未增加自动重试。
+
+## 10. 源码与发布仓分离、GitHub 转私有
+
+- **GitHub：**保存源码、版本标签、更新公钥、工作流和变更记录；私钥、Gitee Token 仍只放 Actions Secrets。私有仓内 `github.token` 仍可用于该仓库的受权发布，runner 仍需有仓库访问权。
+- **Gitee：**必须公开，只存 README/发布说明及 Release 四个二进制制品；Gitee 自动生成的“源码 ZIP”应只有该发布仓的说明文件，不包含上位机源码。
+- **客户端：**继续匿名查询 Gitee Release，验签和校验 SHA-256；不保存 GitHub/Gitee 凭据，不因 GitHub 私有化而改变升级流程。
+- **旧源码历史：**本次只是解除发布流程的源码耦合，**不会删除 Gitee 已经存在的代码、分支、标签或历史**。直接提交一次“删除所有文件”也不能隐藏 Git 历史；GitHub 转私有同样无法收回此前别人下载或 fork 的公开代码。
+
+真正清除 Gitee 已有源码有两种迁移方式，需要维护者另行确认：
+
+1. **保留现有仓库地址：**先备份 Release 四个原始制品和元数据，再按平台能力单独规划清理所有源码引用/历史，仅保留 README 锚点；旧版本标签、源码压缩包和平台保留数据也需检查。不能直接清空整个仓库，避免连同升级 Release 一起删除。
+2. **新建公开发布仓：**只初始化 README，再迁移验证过的签名制品；需要更新客户端的 Gitee 查询配置、下载地址和签名清单，并通过原升级源发布迁移桥接版本。**仅修改流水线变量不能迁移已安装客户端。**不要把旧签名清单里的下载地址直接改写，改写会使签名失效。
+
+当前保持 `warren-cao/auto-focus-factory-tool` 升级地址不变，未执行上述破坏性迁移，也没有替你修改 GitHub 仓库可见性。发布前应确认公开包不含源码、私钥或敏感配置；.NET 编译产物本身仍可能被反编译，源码仓私有化并不是二进制防逆向机制。
 
 ## 官方参考
 

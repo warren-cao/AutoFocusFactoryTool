@@ -2,9 +2,9 @@
 
 本目录中的脚本只进行源码构建、纯软件自动测试、发布包生成和静态校验，不启动 WPF 工作台，不连接设备，也不会发送任何电机命令。
 
-首次配置、发布 `v0.2.0`、安装基线以及后续版本发布的完整步骤见 [CI/CD 执行指南](CICD_GUIDE.md)。
+当前采用 **GitHub 唯一源码仓 + Gitee 公开二进制发布仓**，完整配置、故障收尾、源码仓私有化及后续发布步骤见 [GitHub Actions 发布指南](GITHUB_ACTIONS.md)。不再向 Gitee 同步应用源码或标签。
 
-没有 Gitee 企业版时，优先使用 [GitHub Actions 发布指南](GITHUB_ACTIONS.md)：云端 Windows 执行同一份构建签名脚本，再通过 `Publish-GiteeRelease.ps1` 上传正式升级包，并同步 GitHub Release。
+支持 GitHub 云端 Windows 或自托管 `DESKTOP-AI3E9IB` 执行同一份构建签名脚本，再通过 `Publish-GiteeRelease.ps1` 上传正式升级包，并同步 GitHub Release。下面的 Gitee Go 模板说明仅保留为历史方案，当前结构不再启用。
 
 ## CI
 

@@ -38,6 +38,7 @@ jobs:
       RELEASE_TOOLING_COMMIT: ${{ github.workflow_sha }}
       PUBLISH_RELEASE: ${{ github.event_name == 'push' || inputs.publish }}
       GITEE_REPOSITORY: warren-cao/auto-focus-factory-tool
+      GITEE_RELEASE_TARGET: ${{ vars.GITEE_RELEASE_TARGET }}
       UPDATE_SIGNING_KEY_ID: focusir-release-2026
       MINIMUM_UPDATER_VERSION: '0.2.0'
       DOTNET_NOLOGO: 'true'
@@ -88,7 +89,7 @@ jobs:
           }
           [IO.File]::AppendAllText($env:GITHUB_ENV, "FOCUSIR_TOOLING=$toolingDirectory`n", [Text.UTF8Encoding]::new($false))
 
-      - name: Check Gitee publication prerequisites
+      - name: Check public Gitee release repository
         if: env.PUBLISH_RELEASE == 'true'
         env:
           GITEE_TOKEN: ${{ secrets.GITEE_TOKEN }}

@@ -6,16 +6,18 @@ param(
     [string]$Tag,
     [ValidatePattern('^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+$')]
     [string]$Repository = $env:GITHUB_REPOSITORY,
-    [string]$SourceDirectory
+    [string]$SourceDirectory,
+    [string]$ArtifactDirectory
 )
 
 Set-StrictMode -Version Latest
 $ErrorActionPreference = 'Stop'
 if ([string]::IsNullOrWhiteSpace($env:GH_TOKEN)) { throw '未配置 GitHub 发布凭据。' }
 $repositoryRoot = if ($SourceDirectory) { [IO.Path]::GetFullPath($SourceDirectory) } else { Split-Path -Parent $PSScriptRoot }
-$artifactDirectory = Join-Path $repositoryRoot 'artifacts/release'
+if (-not $ArtifactDirectory) { $ArtifactDirectory = Join-Path $repositoryRoot 'artifacts/release' }
+$ArtifactDirectory = [IO.Path]::GetFullPath($ArtifactDirectory)
 # 用同一套验签和摘要规则复核；不依赖自托管主机预装 gh CLI。
-& (Join-Path $PSScriptRoot 'Publish-GiteeRelease.ps1') -Tag $Tag -Mode Validate -SourceDirectory $repositoryRoot
+& (Join-Path $PSScriptRoot 'Publish-GiteeRelease.ps1') -Tag $Tag -Mode Validate -SourceDirectory $repositoryRoot -ArtifactDirectory $ArtifactDirectory
 $manifest = Get-Content -LiteralPath (Join-Path $artifactDirectory 'update-manifest.json') -Raw | ConvertFrom-Json
 $headers = @{
     Authorization = "Bearer $env:GH_TOKEN"

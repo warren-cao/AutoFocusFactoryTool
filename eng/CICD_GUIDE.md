@@ -1,6 +1,6 @@
 # FocusIR Workbench CI/CD 执行指南
 
-适用于本仓库的首个稳定版 `v0.2.0`。代码托管与 Release 仓库：<https://gitee.com/warren-cao/auto-focus-factory-tool>。
+**历史 Gitee Go 方案：**当前已切换为 GitHub 唯一源码仓（可私有）和 Gitee 公开二进制发布仓，不再向 Gitee 推送源码。现行步骤以 [GitHub Actions 发布指南](GITHUB_ACTIONS.md) 为准；本页下述同仓源码/流水线配置仅留存参考，不再执行。
 
 **没有 Gitee 企业版主机执行能力时，请使用 [GitHub Actions 发布指南](GITHUB_ACTIONS.md)。**该方式使用 GitHub 云端 Windows 节点，仍发布到原 Gitee 升级源；下面的主机组配置仅适用于有相应 Gitee Go 权限的账号。
 

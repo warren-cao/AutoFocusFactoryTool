@@ -8,11 +8,17 @@ param(
     [ValidatePattern('^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+$')]
     [string]$Repository = $(if ($env:GITEE_REPOSITORY) { $env:GITEE_REPOSITORY } else { 'warren-cao/auto-focus-factory-tool' }),
 
-    [ValidateSet('Publish', 'Validate', 'CheckRemote', 'Diagnose')]
+    [ValidateSet('Publish', 'Validate', 'CheckRemote', 'Diagnose', 'VerifyExisting', 'FinalizeExisting')]
     [string]$Mode = 'Publish',
 
     [string]$ArtifactDirectory,
-    [string]$TargetCommit,
+    # 仅用于追溯 GitHub 源码；不要求这个提交存在于 Gitee。
+    [Alias('TargetCommit')]
+    [string]$SourceCommit,
+    # Gitee 仅发布仓中的 README 分支/提交；留空则取该仓库默认分支。
+    [string]$GiteeTargetRef = $env:GITEE_RELEASE_TARGET,
+    [ValidateRange(0, [long]::MaxValue)]
+    [long]$ReleaseId = 0,
     [string]$SourceDirectory,
     [ValidateRange(1, 120)]
     [int]$RequestTimeoutMinutes = 15
@@ -76,18 +82,23 @@ if ($Mode -eq 'Validate') {
     return
 }
 
-if ([string]::IsNullOrWhiteSpace($env:GITEE_TOKEN)) { throw '请配置 GitHub Actions Secret：GITEE_TOKEN。' }
-if (-not $TargetCommit) {
-    $TargetCommit = (& git -C $repositoryRoot rev-parse HEAD).Trim()
+if ($Mode -notin @('Diagnose', 'VerifyExisting') -and [string]::IsNullOrWhiteSpace($env:GITEE_TOKEN)) { throw '请配置 GitHub Actions Secret：GITEE_TOKEN。' }
+if ($Mode -in @('FinalizeExisting', 'VerifyExisting') -and $ReleaseId -le 0) { throw '复核/收尾现有 Release 必须显式指定正整数 ReleaseId。' }
+if (-not $SourceCommit) {
+    $SourceCommit = (& git -C $repositoryRoot rev-parse HEAD).Trim()
     if ($LASTEXITCODE -ne 0) { throw '无法取得发布提交。' }
 }
-if ($TargetCommit -notmatch '^[a-fA-F0-9]{40}$') { throw '发布提交必须是完整的 Git SHA。' }
+if ($SourceCommit -notmatch '^[a-fA-F0-9]{40}$') { throw '源码提交必须是完整的 Git SHA。' }
+$tagCommit = (& git -C $repositoryRoot rev-parse "refs/tags/$Tag^{}").Trim()
+if ($LASTEXITCODE -ne 0 -or $tagCommit -ine $SourceCommit) { throw 'GitHub 源码标签与指定源码提交不一致。' }
 
 $handler = [Net.Http.HttpClientHandler]::new()
 $handler.AllowAutoRedirect = $false
 $client = [Net.Http.HttpClient]::new($handler)
 $client.Timeout = [TimeSpan]::FromMinutes($RequestTimeoutMinutes)
-$client.DefaultRequestHeaders.Authorization = [Net.Http.Headers.AuthenticationHeaderValue]::new('Bearer', $env:GITEE_TOKEN)
+if (-not [string]::IsNullOrWhiteSpace($env:GITEE_TOKEN)) {
+    $client.DefaultRequestHeaders.Authorization = [Net.Http.Headers.AuthenticationHeaderValue]::new('Bearer', $env:GITEE_TOKEN)
+}
 $client.DefaultRequestHeaders.UserAgent.ParseAdd('FocusIR-Release/0.2.0')
 $apiRoot = "https://gitee.com/api/v5/repos/$Repository"
 
@@ -174,7 +185,7 @@ function Get-SafeExceptionDetails {
 function Invoke-GiteeApi {
     param(
         [Parameter(Mandatory)][string]$Method,
-        [Parameter(Mandatory)][string]$Path,
+        [Parameter(Mandatory)][AllowEmptyString()][string]$Path,
         [object]$Body,
         [Net.Http.HttpContent]$Content,
         [object]$UploadContent,
@@ -184,7 +195,8 @@ function Invoke-GiteeApi {
     $requestId = [guid]::NewGuid().ToString('N')
     $safePath = $Path.Split('?')[0]
     $timer = [Diagnostics.Stopwatch]::StartNew()
-    $request = [Net.Http.HttpRequestMessage]::new([Net.Http.HttpMethod]::new($Method), "$apiRoot/$Path")
+    $uri = if ($Path) { "$apiRoot/$Path" } else { $apiRoot }
+    $request = [Net.Http.HttpRequestMessage]::new([Net.Http.HttpMethod]::new($Method), $uri)
     try {
         if ($null -ne $Content) { $request.Content = $Content }
         elseif ($null -ne $Body) {
@@ -194,6 +206,7 @@ function Invoke-GiteeApi {
             requestId = $requestId; method = $Method; path = $safePath; fileName = $FileName
             fileSize = $(if ($null -ne $UploadContent) { $UploadContent.FileSize } else { $null })
             contentLength = $(if ($null -ne $request.Content) { $request.Content.Headers.ContentLength } else { 0 })
+            bodyFields = $(if ($null -ne $Body) { @($Body.Keys | Where-Object { $_ -ne 'access_token' } | Sort-Object) } else { @() })
         }
         try {
             $pending = $client.SendAsync($request)
@@ -248,21 +261,111 @@ function Invoke-GiteeApi {
     finally { $request.Dispose() }
 }
 
+function Assert-RemoteAttachments {
+    param([long]$Id)
+    $attachments = @(Invoke-GiteeApi -Method GET -Path "releases/$Id/attach_files?page=1&per_page=100")
+    if ($attachments.Count -ne 4) { throw 'Gitee 返回的附件数不是四个，拒绝转为正式版。' }
+    foreach ($fileName in $expectedNames) {
+        $matchingAttachments = @($attachments | Where-Object { $_.name -ceq $fileName })
+        if ($matchingAttachments.Count -ne 1) { throw "Gitee 缺少附件或附件重名：$fileName" }
+        $sizeProperty = $matchingAttachments[0].PSObject.Properties['size']
+        if ($null -eq $sizeProperty -or [long]$sizeProperty.Value -ne (Get-Item -LiteralPath (Join-Path $ArtifactDirectory $fileName)).Length) {
+            throw "Gitee 附件长度缺失或不匹配：$fileName"
+        }
+    }
+}
+
+function Assert-RemoteArtifactDigests {
+    # 仅用于显式收尾：不能凭四个相同长度的文件就把旧预发布提升为正式版。
+    # 匿名下载并流式验哈希，不向 CDN 转发 Gitee Token，也不写入新的安装包。
+    $downloadHandler = [Net.Http.HttpClientHandler]::new()
+    $downloadHandler.AllowAutoRedirect = $false
+    $downloadClient = [Net.Http.HttpClient]::new($downloadHandler)
+    $downloadClient.Timeout = $client.Timeout
+    try {
+        foreach ($fileName in $expectedNames) {
+            $localPath = Join-Path $ArtifactDirectory $fileName
+            $expectedLength = (Get-Item -LiteralPath $localPath).Length
+            $expectedHash = (Get-FileHash -LiteralPath $localPath -Algorithm SHA256).Hash
+            $uri = [Uri]::new("https://gitee.com/$Repository/releases/download/$Tag/$fileName")
+            $verified = $false
+            for ($redirect = 0; $redirect -le 5; $redirect++) {
+                if ($uri.Scheme -cne 'https' -or $uri.Port -ne 443 -or $uri.UserInfo -or
+                    $uri.IdnHost -notin @('gitee.com', 'foruda.gitee.com')) { throw '收尾下载被重定向到非受信任地址。' }
+                $response = $downloadClient.GetAsync($uri, [Net.Http.HttpCompletionOption]::ResponseHeadersRead).GetAwaiter().GetResult()
+                try {
+                    $status = [int]$response.StatusCode
+                    if ($status -in @(301, 302, 303, 307, 308)) {
+                        if ($null -eq $response.Headers.Location) { throw '收尾下载缺少重定向地址。' }
+                        $uri = [Uri]::new($uri, $response.Headers.Location)
+                        continue
+                    }
+                    if ($status -ne 200) { throw "收尾下载返回 HTTP $status。" }
+                    $hash = [Security.Cryptography.IncrementalHash]::CreateHash([Security.Cryptography.HashAlgorithmName]::SHA256)
+                    $stream = $response.Content.ReadAsStreamAsync().GetAwaiter().GetResult()
+                    $deadline = [Threading.CancellationTokenSource]::new($client.Timeout)
+                    try {
+                        $buffer = [byte[]]::new(81920)
+                        [long]$total = 0
+                        while (($count = $stream.ReadAsync($buffer, 0, $buffer.Length, $deadline.Token).GetAwaiter().GetResult()) -ne 0) {
+                            $total += $count
+                            if ($total -gt $expectedLength) { throw '远端附件超出已签名制品长度。' }
+                            $hash.AppendData($buffer, 0, $count)
+                        }
+                        $actualHash = [Convert]::ToHexString($hash.GetHashAndReset())
+                        if ($total -ne $expectedLength -or $actualHash -ine $expectedHash) { throw '远端附件内容与原始签名制品不一致。' }
+                        Write-ReleaseDiagnostic 'remote-artifact-verified' @{ fileName = $fileName; size = $total; sha256 = $actualHash }
+                        $verified = $true
+                    }
+                    finally { $deadline.Dispose(); $stream.Dispose(); $hash.Dispose() }
+                }
+                finally { $response.Dispose() }
+                break
+            }
+            if (-not $verified) { throw '收尾下载重定向次数过多。' }
+        }
+    }
+    catch {
+        $failure = Get-SafeExceptionDetails $_.Exception
+        Write-ReleaseDiagnostic 'remote-artifact-verification-failed' @{ category = $failure.category; exceptions = $failure.exceptions }
+        throw '远端附件复核失败；未转为正式版。请检查原始制品、网络、下载地址及日志，不要重新打包替换。'
+    }
+    finally { $downloadClient.Dispose() }
+}
+
+function Complete-GiteeRelease {
+    param([object]$Release)
+    if ([long]$Release.id -le 0 -or $Release.tag_name -cne $Tag) { throw 'Gitee Release ID 或标签不匹配。' }
+    Assert-RemoteAttachments -Id ([long]$Release.id)
+    $flag = [string]$Release.prerelease
+    if ($flag -ieq 'false') {
+        Write-Host 'Gitee 已是正式版，仅复核，不修改现有 Release。'
+        return
+    }
+    if ($flag -ine 'true') { throw 'Gitee 预发布状态无效。' }
+    # Gitee PATCH 不支持只更新 prerelease，三个元数据字段也都是必填。
+    # 使用当前服务端值，避免收尾时覆盖维护者已修改的名称和说明。
+    if ([string]::IsNullOrWhiteSpace($Release.name) -or [string]::IsNullOrWhiteSpace($Release.body)) {
+        throw 'Gitee Release 名称或说明为空，拒绝自动收尾。'
+    }
+    $stableRelease = Invoke-GiteeApi -Method PATCH -Path "releases/$($Release.id)" -Body @{
+        access_token = $env:GITEE_TOKEN
+        tag_name = $Tag
+        name = $Release.name
+        body = $Release.body
+        prerelease = $false
+    }
+    if ([long]$stableRelease.id -ne [long]$Release.id -or $stableRelease.tag_name -cne $Tag -or [string]$stableRelease.prerelease -ine 'false') {
+        throw 'Gitee 未确认同一版本已转为正式版。'
+    }
+    Write-Host "Gitee 正式版发布成功：https://gitee.com/$Repository/releases/tag/$Tag"
+}
+
 try {
-    # GitHub 和 Gitee 必须已有同一源码提交；不自动改写或推送 Gitee 主分支。
-    $commit = Invoke-GiteeApi -Method GET -Path "commits/$TargetCommit" -AllowNotFound
-    if ($null -eq $commit -or $commit.sha -ine $TargetCommit) {
-        throw 'Gitee 尚无对应源码提交。请先向 Gitee 推送 master 和同一版本标签，再运行 GitHub 发布。'
-    }
-    $remoteTag = $null
-    for ($page = 1; $page -le 100; $page++) {
-        $tags = @(Invoke-GiteeApi -Method GET -Path "tags?page=$page&per_page=100")
-        $matchingTags = @($tags | Where-Object { $_.name -ceq $Tag })
-        if ($matchingTags.Count -gt 0) { $remoteTag = $matchingTags[0]; break }
-        if ($tags.Count -lt 100) { break }
-    }
-    if ($null -eq $remoteTag -or $remoteTag.commit.sha -ine $TargetCommit) {
-        throw 'Gitee 版本标签缺失或指向不同提交。请先同步同一标签，禁止把不同源码发布为同一版本。'
+    # 源码只保存在 GitHub。Gitee 保留一个 README 提交即可承载 Release 标签。
+    $repositoryInfo = Invoke-GiteeApi -Method GET -Path ''
+    if ($null -eq $repositoryInfo -or [string]$repositoryInfo.private -ine 'false') {
+        throw 'Gitee 发布仓必须公开，客户端不会保存令牌访问私有仓库。'
     }
     $existing = Invoke-GiteeApi -Method GET -Path "releases/tags/$Tag" -AllowNotFound
     if ($Mode -eq 'Diagnose') {
@@ -275,11 +378,32 @@ try {
         Write-Host 'Gitee 只读诊断完成；没有创建、上传、修改或删除 Release。此检查不证明大文件上传一定成功。'
         return
     }
+    if ($Mode -in @('FinalizeExisting', 'VerifyExisting')) {
+        if ($null -eq $existing -or [long]$existing.id -ne $ReleaseId -or $existing.tag_name -cne $Tag) {
+            throw '指定 ReleaseId 与目标标签不匹配，未修改远端。'
+        }
+        $null = Assert-LocalArtifacts
+        Assert-RemoteAttachments -Id $ReleaseId
+        Assert-RemoteArtifactDigests
+        if ($Mode -eq 'VerifyExisting') {
+            Write-Host '原始签名制品与远端四个附件完全一致；仅复核，未修改 Release。'
+            return
+        }
+        Complete-GiteeRelease -Release $existing
+        return
+    }
     if ($null -ne $existing) {
         throw "Gitee 已存在 $Tag 的 Release，禁止覆盖。失败后的预发布残留或 GitHub 镜像补发请按 eng/GITHUB_ACTIONS.md 处理。"
     }
+    if ([string]::IsNullOrWhiteSpace($GiteeTargetRef)) { $GiteeTargetRef = [string]$repositoryInfo.default_branch }
+    if ([string]::IsNullOrWhiteSpace($GiteeTargetRef)) { throw 'Gitee 发布仓为空；请先创建仅含 README 的初始化提交。' }
+    $anchor = Invoke-GiteeApi -Method GET -Path ("commits/{0}" -f [Uri]::EscapeDataString($GiteeTargetRef)) -AllowNotFound
+    if ($null -eq $anchor -or $anchor.sha -notmatch '^[a-fA-F0-9]{40}$') {
+        throw 'Gitee 发布仓缺少有效的 README 锚点提交；不需要上传 GitHub 源码。'
+    }
+    Write-ReleaseDiagnostic 'release-provenance' @{ sourceCommit = $SourceCommit; giteeAnchorCommit = $anchor.sha }
     if ($Mode -eq 'CheckRemote') {
-        Write-Host "Gitee 已包含源码提交，$Tag 尚未发布。"
+        Write-Host "Gitee 公开发布仓可用，$Tag 尚未发布；不要求同步 GitHub 源码或标签。"
         return
     }
 
@@ -288,7 +412,7 @@ try {
     $release = Invoke-GiteeApi -Method POST -Path 'releases' -Body @{
         access_token = $env:GITEE_TOKEN
         tag_name = $Tag
-        target_commitish = $TargetCommit
+        target_commitish = $anchor.sha
         name = "FocusIR Workbench $Tag"
         body = $manifest.releaseNotes
         prerelease = $true
@@ -312,23 +436,7 @@ try {
             finally { $form.Dispose() }
         }
 
-        $attachments = @(Invoke-GiteeApi -Method GET -Path "releases/$releaseId/attach_files?page=1&per_page=100")
-        if ($attachments.Count -ne 4) { throw 'Gitee 返回的附件数不是四个，拒绝转为正式版。' }
-        foreach ($fileName in $expectedNames) {
-            $matchingAttachments = @($attachments | Where-Object { $_.name -ceq $fileName })
-            if ($matchingAttachments.Count -ne 1) { throw "Gitee 缺少附件或附件重名：$fileName" }
-            $sizeProperty = $matchingAttachments[0].PSObject.Properties['size']
-            if ($null -ne $sizeProperty -and [long]$sizeProperty.Value -ne (Get-Item -LiteralPath (Join-Path $ArtifactDirectory $fileName)).Length) {
-                throw "Gitee 附件长度不匹配：$fileName"
-            }
-        }
-        $stableRelease = Invoke-GiteeApi -Method PATCH -Path "releases/$releaseId" -Body @{
-            access_token = $env:GITEE_TOKEN
-            prerelease = $false
-        }
-        $stableFlag = [string]$stableRelease.prerelease
-        if ($stableFlag -ine 'false') { throw 'Gitee 未确认正式版状态。' }
-        Write-Host "Gitee 正式版发布成功：https://gitee.com/$Repository/releases/tag/$Tag"
+        Complete-GiteeRelease -Release $release
     }
     catch {
         Write-Warning "Gitee Release $releaseId 可能仍处于预发布状态；请核对附件后再处理，不要盲目覆盖或重试创建。"

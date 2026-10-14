@@ -1,0 +1,136 @@
+name: FocusIR Finalize Existing Release
+
+# Recovery only: reuse the original signed artifact. Never rebuild a published version.
+on:
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: 'Existing source tag, e.g. v0.2.0'
+        required: true
+        type: string
+      source_run_id:
+        description: 'Original build run ID (this failure: 38519225911)'
+        required: true
+        type: string
+      gitee_release_id:
+        description: 'Existing Gitee Release ID (this failure: 1204616)'
+        required: true
+        type: string
+      publish:
+        description: 'Finalize Gitee and publish GitHub (false = original artifact validation only)'
+        required: true
+        default: false
+        type: boolean
+
+permissions:
+  contents: read
+
+concurrency:
+  group: focusir-stable-release
+  cancel-in-progress: false
+
+jobs:
+  finalize:
+    name: Recover the original signed release on DESKTOP-AI3E9IB
+    runs-on: [self-hosted, Windows, X64]
+    timeout-minutes: 60
+    permissions:
+      contents: write
+      actions: read
+    defaults:
+      run:
+        shell: pwsh
+    env:
+      RELEASE_TAG: ${{ inputs.tag }}
+      SOURCE_RUN_ID: ${{ inputs.source_run_id }}
+      GITEE_RELEASE_ID: ${{ inputs.gitee_release_id }}
+      PUBLISH_RELEASE: ${{ inputs.publish }}
+      RELEASE_TOOLING_COMMIT: ${{ github.workflow_sha }}
+      GITEE_REPOSITORY: warren-cao/auto-focus-factory-tool
+
+    steps:
+      - name: Validate trusted recovery request
+        run: |
+          if ($env:GITHUB_REF -ne 'refs/heads/master' -or $env:RUNNER_NAME -ine 'DESKTOP-AI3E9IB') { throw 'Use master on the trusted runner.' }
+          if ($env:RELEASE_TAG -cnotmatch '^v(0|[1-9]\d*)\.(0|[1-9]\d*)\.(0|[1-9]\d*)$') { throw 'Invalid stable tag.' }
+          foreach ($id in @($env:SOURCE_RUN_ID, $env:GITEE_RELEASE_ID)) {
+            if ($id -cnotmatch '^[1-9]\d{0,17}$') { throw 'Run and release IDs must be positive integers.' }
+          }
+
+      - name: Checkout original source tag and complete history
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: refs/tags/${{ env.RELEASE_TAG }}
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: Load trusted upload tooling
+        run: |
+          git merge-base --is-ancestor HEAD refs/remotes/origin/master
+          if ($LASTEXITCODE -ne 0) { throw 'Source tag must belong to master.' }
+          $toolingDirectory = Join-Path $env:RUNNER_TEMP "focusir-recovery-$env:GITHUB_RUN_ID-$env:GITHUB_RUN_ATTEMPT"
+          $null = [IO.Directory]::CreateDirectory($toolingDirectory)
+          foreach ($name in @('Publish-GiteeRelease.ps1', 'Publish-GitHubRelease.ps1')) {
+            $source = @(git show ('{0}:eng/{1}' -f $env:RELEASE_TOOLING_COMMIT, $name))
+            if ($LASTEXITCODE -ne 0) { throw 'Unable to load trusted upload tooling.' }
+            [IO.File]::WriteAllText((Join-Path $toolingDirectory $name), ($source -join "`n"), [Text.UTF8Encoding]::new($false))
+          }
+          [IO.File]::AppendAllText($env:GITHUB_ENV, "FOCUSIR_TOOLING=$toolingDirectory`n", [Text.UTF8Encoding]::new($false))
+
+      - name: Select original artifact from trusted build
+        id: original
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          $headers = @{ Authorization = "Bearer $env:GH_TOKEN"; Accept = 'application/vnd.github+json'; 'User-Agent' = 'FocusIR-Recovery' }
+          $root = "https://api.github.com/repos/$env:GITHUB_REPOSITORY/actions"
+          try {
+            $run = Invoke-RestMethod -Uri "$root/runs/$env:SOURCE_RUN_ID" -Headers $headers -TimeoutSec 60
+            if ($run.head_repository.full_name -cne $env:GITHUB_REPOSITORY -or $run.status -cne 'completed' -or
+                $run.event -notin @('push', 'workflow_dispatch') -or
+                $run.path -notin @('.github/workflows/release.yml', '.github/workflows/release-self-hosted.yml')) {
+              throw 'Source run is not a trusted completed build.'
+            }
+            $artifacts = Invoke-RestMethod -Uri "$root/runs/$env:SOURCE_RUN_ID/artifacts?per_page=100" -Headers $headers -TimeoutSec 60
+            $names = @("focusir-release-$env:RELEASE_TAG-$($run.run_attempt)", "focusir-self-hosted-release-$env:RELEASE_TAG-$($run.run_attempt)")
+            $selected = @($artifacts.artifacts | Where-Object { $_.name -cin $names -and -not $_.expired })
+            if ($selected.Count -ne 1) { throw 'Exactly one original, unexpired signed artifact is required.' }
+            [IO.File]::AppendAllText($env:GITHUB_OUTPUT, "artifact_id=$($selected[0].id)`n", [Text.UTF8Encoding]::new($false))
+          } catch { throw 'Unable to verify original artifact provenance. Do not rebuild or substitute another artifact.' }
+
+      - name: Download the original immutable artifact
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          artifact-ids: ${{ steps.original.outputs.artifact_id }}
+          run-id: ${{ inputs.source_run_id }}
+          github-token: ${{ github.token }}
+          path: artifacts/recovery
+          merge-multiple: true
+          digest-mismatch: error
+
+      - name: Verify original signature and exact remote files
+        run: |
+          & "$env:FOCUSIR_TOOLING/Publish-GiteeRelease.ps1" -Tag $env:RELEASE_TAG -Mode VerifyExisting -ReleaseId $env:GITEE_RELEASE_ID -SourceDirectory $env:GITHUB_WORKSPACE -ArtifactDirectory artifacts/recovery
+
+      - name: Verify remote bytes and finalize the same Gitee release
+        if: env.PUBLISH_RELEASE == 'true'
+        env:
+          GITEE_TOKEN: ${{ secrets.GITEE_TOKEN }}
+        run: |
+          & "$env:FOCUSIR_TOOLING/Publish-GiteeRelease.ps1" -Tag $env:RELEASE_TAG -Mode FinalizeExisting -ReleaseId $env:GITEE_RELEASE_ID -SourceDirectory $env:GITHUB_WORKSPACE -ArtifactDirectory artifacts/recovery
+
+      - name: Publish the identical original files to GitHub
+        if: env.PUBLISH_RELEASE == 'true'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          & "$env:FOCUSIR_TOOLING/Publish-GitHubRelease.ps1" -Tag $env:RELEASE_TAG -SourceDirectory $env:GITHUB_WORKSPACE -ArtifactDirectory artifacts/recovery
+
+      - name: Preserve recovery diagnostics
+        if: always()
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: focusir-finalize-diagnostics-${{ env.RELEASE_TAG }}-${{ github.run_attempt }}
+          path: artifacts/release-logs/**
+          if-no-files-found: ignore
+          retention-days: 14
