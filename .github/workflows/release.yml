@@ -1,0 +1,130 @@
+name: FocusIR Release
+
+on:
+  push:
+    tags:
+      - 'v*'
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: 'Existing stable tag, e.g. v0.2.0'
+        required: true
+        type: string
+      publish:
+        description: 'Publish to Gitee and GitHub (false builds artifacts only)'
+        required: true
+        default: true
+        type: boolean
+
+permissions:
+  contents: read
+
+concurrency:
+  group: focusir-stable-release
+  cancel-in-progress: false
+
+jobs:
+  release:
+    name: Build, sign and publish Windows x64
+    runs-on: windows-2025
+    timeout-minutes: 60
+    permissions:
+      contents: write
+    defaults:
+      run:
+        shell: pwsh
+    env:
+      RELEASE_TAG: ${{ inputs.tag || github.ref_name }}
+      PUBLISH_RELEASE: ${{ github.event_name == 'push' || inputs.publish }}
+      GITEE_REPOSITORY: warren-cao/auto-focus-factory-tool
+      UPDATE_SIGNING_KEY_ID: focusir-release-2026
+      MINIMUM_UPDATER_VERSION: '0.2.0'
+      DOTNET_NOLOGO: 'true'
+      DOTNET_CLI_TELEMETRY_OPTOUT: 'true'
+
+    steps:
+      - name: Validate release request
+        run: |
+          if ($env:RELEASE_TAG -cnotmatch '^v(0|[1-9]\d*)\.(0|[1-9]\d*)\.(0|[1-9]\d*)$') {
+            throw 'Release tag must be a canonical stable vX.Y.Z tag.'
+          }
+          if ($env:GITHUB_EVENT_NAME -eq 'workflow_dispatch' -and $env:GITHUB_REF -ne 'refs/heads/master') {
+            throw 'Run manual releases from the master workflow and select the version in the tag input.'
+          }
+
+      - name: Checkout release tag and complete history
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: refs/tags/${{ env.RELEASE_TAG }}
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: Install .NET SDK
+        uses: actions/setup-dotnet@a98b56852c35b8e3190ac28c8c2271da59106c68 # v6
+        with:
+          global-json-file: global.json
+          cache: true
+          cache-dependency-path: tools/FocusIR.Workbench/**/packages.lock.json
+
+      - name: Check signing secret and tag lineage
+        env:
+          UPDATE_SIGNING_KEY_PKCS8: ${{ secrets.UPDATE_SIGNING_KEY_PKCS8 }}
+        run: |
+          if ([string]::IsNullOrWhiteSpace($env:UPDATE_SIGNING_KEY_PKCS8)) {
+            throw 'Configure the UPDATE_SIGNING_KEY_PKCS8 repository secret first.'
+          }
+          git merge-base --is-ancestor HEAD refs/remotes/origin/master
+          if ($LASTEXITCODE -ne 0) { throw 'The release commit must belong to master.' }
+
+      - name: Check Gitee publication prerequisites
+        if: env.PUBLISH_RELEASE == 'true'
+        env:
+          GITEE_TOKEN: ${{ secrets.GITEE_TOKEN }}
+        run: |
+          ./eng/Publish-GiteeRelease.ps1 -Tag $env:RELEASE_TAG -Mode CheckRemote
+
+      - name: Build, test, publish and sign package
+        env:
+          UPDATE_SIGNING_KEY_PKCS8: ${{ secrets.UPDATE_SIGNING_KEY_PKCS8 }}
+        run: |
+          ./eng/release.ps1 -Tag $env:RELEASE_TAG
+
+      - name: Preserve test results and build logs
+        if: always()
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: focusir-diagnostics-${{ env.RELEASE_TAG }}-${{ github.run_attempt }}
+          path: |
+            artifacts/test-results/**
+            artifacts/build/**
+          if-no-files-found: ignore
+          retention-days: 14
+
+      - name: Preserve the four signed release files
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: focusir-release-${{ env.RELEASE_TAG }}-${{ github.run_attempt }}
+          path: artifacts/release/*
+          if-no-files-found: error
+          compression-level: 0
+          retention-days: 30
+
+      - name: Publish complete stable release to Gitee
+        if: env.PUBLISH_RELEASE == 'true'
+        env:
+          GITEE_TOKEN: ${{ secrets.GITEE_TOKEN }}
+        run: |
+          ./eng/Publish-GiteeRelease.ps1 -Tag $env:RELEASE_TAG
+
+      - name: Publish the same files to GitHub Releases
+        if: env.PUBLISH_RELEASE == 'true'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          $manifest = Get-Content artifacts/release/update-manifest.json -Raw | ConvertFrom-Json
+          $notesPath = Join-Path $env:RUNNER_TEMP 'focusir-release-notes.md'
+          [IO.File]::WriteAllText($notesPath, $manifest.releaseNotes, [Text.UTF8Encoding]::new($false))
+          $files = @(Get-ChildItem artifacts/release -File | ForEach-Object FullName)
+          # --verify-tag prevents accidental creation of a tag at the wrong commit.
+          gh release create $env:RELEASE_TAG @files --repo $env:GITHUB_REPOSITORY --verify-tag --title "FocusIR Workbench $env:RELEASE_TAG" --notes-file $notesPath
+          if ($LASTEXITCODE -ne 0) { throw 'GitHub Release publication failed; Gitee may already be complete. See eng/GITHUB_ACTIONS.md.' }

@@ -49,6 +49,8 @@ dotnet build .\FocusIR.Workbench.sln -c Release --no-restore
 
 ## 升级与自动发布
 
+当前推荐使用 GitHub Actions 的云端 Windows 节点构建并发布到 Gitee 与 GitHub Releases，无需 Gitee 企业版。工作流为 `.github/workflows/release.yml`，配置两个 Secrets 后按 [GitHub Actions 发布指南](eng/GITHUB_ACTIONS.md) 同步源码并推送版本标签。
+
 应用版本统一配置在 `Directory.Build.props` 的 `VersionPrefix`。稳定版本使用 `v主版本.次版本.修订版本` 标签，并通过公开 Gitee Release 发布 `win-x64` 自包含 ZIP、升级清单、ECDSA 签名和 SHA-256 校验文件。
 
 应用只在用户确认且设备已断开、没有活动任务或控制租约、没有未完成编辑/保存时启动安装。安装由独立更新器完成，使用 `%LocalAppData%\ThermEye\FocusIRWorkbench` 下的版本目录切换并保留上一版本；新版本未在规定时间内报告健康状态时自动回滚。升级过程不会主动停止电机或连接设备。

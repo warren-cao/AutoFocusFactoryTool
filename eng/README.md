@@ -4,6 +4,8 @@
 
 首次配置、发布 `v0.2.0`、安装基线以及后续版本发布的完整步骤见 [CI/CD 执行指南](CICD_GUIDE.md)。
 
+没有 Gitee 企业版时，优先使用 [GitHub Actions 发布指南](GITHUB_ACTIONS.md)：云端 Windows 执行同一份构建签名脚本，再通过 `Publish-GiteeRelease.ps1` 上传正式升级包，并同步 GitHub Release。
+
 ## CI
 
 在干净的仓库根目录执行：

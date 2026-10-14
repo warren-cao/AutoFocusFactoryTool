@@ -2,6 +2,8 @@
 
 适用于本仓库的首个稳定版 `v0.2.0`。代码托管与 Release 仓库：<https://gitee.com/warren-cao/auto-focus-factory-tool>。
 
+**没有 Gitee 企业版主机执行能力时，请使用 [GitHub Actions 发布指南](GITHUB_ACTIONS.md)。**该方式使用 GitHub 云端 Windows 节点，仍发布到原 Gitee 升级源；下面的主机组配置仅适用于有相应 Gitee Go 权限的账号。
+
 执行顺序：推送代码 → 配置 Windows 节点和发布凭证 → 手动通过 CI → 开启标签触发 → 推送 `v0.2.0` → 检查四个附件 → 工位安装基线。
 
 正式发布优先导入 `.workflow/focusir-workbench-release.yml`，它使用本工程的 Windows 构建、测试、签名打包与 Gitee Release 流程。原 `.workflow/流水线-202610131538.yml` 为不适用于本工程的 Maven 示例，不应启用。`.gitee/release-pipeline.yml` 作为较简模板保留；两者只能选择一条启用正式发布，避免同标签重复执行。
