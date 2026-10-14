@@ -1,9 +1,10 @@
 # GitHub Actions 构建与发布
 
-当前推荐方案：GitHub 云端 Windows 构建，向 Gitee 发布正式升级包，并把相同的四个文件发布到 GitHub Releases。无需 Gitee 企业版或自有构建主机。
+支持两条发布路径：GitHub 云端 Windows 节点，或自托管 Windows 节点 `DESKTOP-AI3E9IB`。两者均向 Gitee 发布正式升级包，并把相同的四个文件发布到 GitHub Releases，无需 Gitee 企业版。
 
 - GitHub 仓库：<https://github.com/warren-cao/AutoFocusFactoryTool>
-- 工作流：`.github/workflows/release.yml`
+- 云端工作流：`.github/workflows/release.yml`
+- 自托管工作流：`.github/workflows/release-self-hosted.yml`（仅手动触发）
 - 上位机升级源：<https://gitee.com/warren-cao/auto-focus-factory-tool/releases>
 
 ## 1. 一次性配置 Secrets
@@ -57,7 +58,7 @@ git -c http.version=HTTP/1.1 -c http.sslBackend=schannel push github v0.2.0
 
 只构建模式仍保留现有发布脚本的版本递增、远端重复版本检查，因此不能用于覆盖已发布版本。测试新工作流可使用尚未发布的版本标签。
 
-发布脚本固定取自本次工作流的提交（`github.workflow_sha`），再通过 `-SourceDirectory` 对选中的版本标签源码构建。这样可以在 master 修复 CI 工具后，手动发布尚未成功发布的旧标签，而不移动标签、改变应用源码或跳过安全检查。版本号、更新日志、验签公钥与编译内容仍全部来自所选标签。
+构建脚本及两个平台的上传脚本均固定取自本次工作流的提交（`github.workflow_sha`），再通过 `-SourceDirectory` 对选中的版本标签源码构建和验签。工具位于 runner 临时目录，不污染源码工作区。这样可以在 master 修复 CI 工具后，手动发布尚未成功发布的旧标签，而不移动标签、改变应用源码或跳过安全检查。版本号、更新日志、验签公钥与编译内容仍全部来自所选标签。
 
 如果旧构建因 `tag_name` 属性错误失败，修复推送后不要只点击旧记录的 Re-run；应在 Actions → FocusIR Release → Run workflow 选择 `master`，tag 仍填 `v0.2.0`，使用包含修复的新工作流。仅在该版本尚未发布时重试；Gitee 与 GitHub 的标签仍须指向相同源码提交。
 
@@ -70,7 +71,7 @@ git -c http.version=HTTP/1.1 -c http.sslBackend=schannel push github v0.2.0
 5. 调用 `eng/release.ps1`，执行锁定还原、Release 警告即错误编译、现有纯软件测试、两程序自包含发布、ZIP 打包与 ECDSA 签名。
 6. 上传诊断制品（14 天）和签名升级包制品（30 天），仅收集指定目录，不上传私钥。
 7. 调用 `eng/Publish-GiteeRelease.ps1`，复核四个文件的签名和摘要，先创建预发布 Release，再逐个上传 ZIP、签名、摘要和清单；确认附件列表完整后转为正式版。
-8. 使用 GitHub CLI 把相同四个文件发布为 GitHub 正式 Release。
+8. 使用 `eng/Publish-GitHubRelease.ps1` 调用 GitHub 官方 REST API，先创建草稿并上传相同四个文件，确认各附件的名称、大小和状态后转正式版。无需预装 GitHub CLI。
 
 只允许 tag push 和手动触发，不因 PR 执行签名或发版。发布任务串行运行，不取消正在上传的任务。GitHub concurrency 最多保留一个等待任务；不要密集推送多个发布标签，逐版确认完成后再发布下一版。
 
@@ -101,8 +102,57 @@ Actions 页面始终尝试归档测试结果和 MSBuild 日志；构建、测试
 
 Gitee 发布上传脚本还提供 `-Mode Validate`，可对已有 `artifacts/release` 进行离线结构、签名和摘要检查；`-Mode CheckRemote` 仅做凭证、源码提交和重复 Release 的远端只读检查。
 
+## 7. 使用 DESKTOP-AI3E9IB 自托管发布
+
+已核对该 runner 的注册标签为 `self-hosted`、`Windows`、`X64`，名称为 `DESKTOP-AI3E9IB`。名称不等于标签，不能直接把名称填入 `runs-on`，否则会一直排队。新工作流匹配这三个标签，并在第一步核对 `RUNNER_NAME`；只有该主机才继续构建和加载机密。如果以后增加同标签主机，应为目标主机配置专用标签，再修改 `runs-on`，避免错误调度。
+
+准备要求：
+
+- runner 在线，并使用独立构建目录和普通低权限账号；不要把用户项目或私钥存放在 Actions checkout 目录中，checkout 会清理自己的工作区。
+- runner 进程的 PATH 中有 PowerShell **7.4+**（`pwsh`）和 Git。安装或修改 PATH 后重启 runner 进程/服务。Windows PowerShell 5.1 不能替代 `pwsh`。
+- 使用兼容固定版本官方 actions 的最新稳定 runner。更新 runner 本身不等于安装 PowerShell。
+- `.NET` SDK 由工作流按 `global.json` 安装到 runner 临时目录，不要求管理员权限；主机应能访问 GitHub、GitHub Artifacts、微软 SDK 下载站、NuGet 和 Gitee。
+- 两个仓库 Secrets 与云端工作流相同，无需在 runner 本地持久化 Gitee Token 或签名私钥。
+- 自托管主机是持久环境，不能把它作为处理外部不可信 PR 的通用节点，也不能连接镜头执行自动工厂任务。工作流仅运行既有纯软件测试，不启动上位机或驱动电机。
+
+首次验证步骤：
+
+1. 把新工作流和工具提交推送到 GitHub `master`，不移动 `v0.2.0` 标签。
+2. Actions → **FocusIR Release (Self-hosted)** → **Run workflow**。
+3. 分支选择 `master`，tag 填 `v0.2.0`，保持 **publish=false**。
+4. 查看 PowerShell 前置检查和实际 runner 名称，再查看 Gitee 只读诊断、编译、既有软件测试和签名打包结果。
+5. 下载 `focusir-self-hosted-release-...` 和 `focusir-self-hosted-diagnostics-...` 制品。此模式不会创建、上传、修改或删除远端 Release；Gitee 已有不完整预发布时仍可以进行只读诊断。它验证基本 API 连通性，不验证大 ZIP 上传。
+
+正式发布时，再手动运行同一工作流并选择 **publish=true**，执行完整 Gitee 和 GitHub 发布。
+
+**已有预发布不能直接重发：**之前失败留下的 `v0.2.0` 预发布（Release `1204184`）必须先由维护者检查是否仍为预发布、附件是否完整、是否曾被分发。确认可清理后人工删除该不完整 Release 记录（保留原标签），或准备更高的新版本。脚本不会自动删除、覆盖或续传现有 Release；不要绕过这个检查。对已正式分发的版本，必须发布更高版本。
+
+云端和自托管工作流共用 `focusir-stable-release` 并发锁。标签 push 仍触发原云端流程；自托管方案仅手动触发。新版本如需只在自托管构建，先推送并等待自动云端流程结束，或事先在 Actions 页面停用云端工作流；不要让两个流程争相发布同一标签。
+
+## 8. 查看 Gitee 上传诊断
+
+`eng/Publish-GiteeRelease.ps1` 的 `CheckRemote`、`Diagnose`、`Publish` 模式都会在 `artifacts/release-logs/gitee-*.jsonl` 留下结构化日志，同时显示在 Actions 输出中。两个工作流都在最后以 `always()` 收集这些日志，所以上传失败时仍能下载。
+
+- `session`：模式、标签、runner 名称、PowerShell 版本、请求超时，以及是否设置了代理环境变量。仅记录代理是否配置，不记录代理地址；未设置环境变量不代表系统没有代理。
+- `request-start`：请求 ID、HTTP 方法、无查询参数的 API 路径、附件名称、文件字节数和请求长度。
+- `upload-progress`：每约 15 秒记录已写入传输流的字节数和耗时。`waitingForResponse=true` 表示文件字节已经写入流，**不代表服务端已完整接收、持久化或创建附件**。
+- `request-response`：HTTP 状态码、总耗时和上传计数。401/403 优先核对凭证及权限，413 核对体积限制，429 核对频率限制，5xx 核对服务端情况。
+- `request-error`：超时/取消或传输错误分类、异常链类型、HRESULT，以及可用的 `HttpRequestError`、Socket 错误码；不输出原始异常消息、堆栈、请求头、正文、Token、私钥或代理凭据。
+- `response-parse-error`：服务端返回了无法解析的 JSON，保留请求 ID，但不输出原始正文。
+- `existing-release`：只读诊断查询到的已有 Release ID、预发布状态和附件数量。
+
+默认每个 HTTP 请求仍为 **15 分钟**，可通过 `-RequestTimeoutMinutes` 显式调整（1–120 分钟）；只延长超时不是链路问题的修复。发生超时时先核对附件实际状态，再决定人工处理，不自动重试可能产生重复附件的 POST。
+
+只读诊断命令（需要本地进程已安全设置 `GITEE_TOKEN`，不要把其值写进命令历史）：
+
+```powershell
+./eng/Publish-GiteeRelease.ps1 -Tag v0.2.0 -TargetCommit (git rev-parse 'v0.2.0^{}') -Mode Diagnose
+```
+
 ## 官方参考
 
 - [GitHub Windows 托管节点](https://docs.github.com/en/actions/reference/runners/github-hosted-runners)
 - [GitHub Actions Secrets](https://docs.github.com/en/actions/security-for-github-actions/security-guides/using-secrets-in-github-actions)
+- [自托管 runner 标签与调度](https://docs.github.com/en/actions/how-tos/manage-runners/self-hosted-runners/use-in-a-workflow)
+- [自托管 runner 安全要求](https://docs.github.com/en/actions/reference/security/secure-use#hardening-for-self-hosted-runners)
 - [Gitee Release 和附件 API](https://gitee.com/sdk/gitee5j/blob/main/docs/RepositoriesApi.md)

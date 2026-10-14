@@ -1,0 +1,147 @@
+name: FocusIR Release (Self-hosted)
+
+# Never run untrusted PRs on a persistent factory/build workstation.
+# Manual only: the existing cloud workflow keeps ownership of tag-push releases.
+on:
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: 'Existing stable tag, e.g. v0.2.0'
+        required: true
+        type: string
+      publish:
+        description: 'Publish to Gitee and GitHub (false = read-only diagnostics and signed build)'
+        required: true
+        default: false
+        type: boolean
+
+permissions:
+  contents: read
+
+# Share the lock with the cloud release workflow; do not upload concurrently.
+concurrency:
+  group: focusir-stable-release
+  cancel-in-progress: false
+
+jobs:
+  release:
+    name: Build and publish on DESKTOP-AI3E9IB
+    # The runner name is NOT a label. These are its verified registered labels.
+    runs-on: [self-hosted, Windows, X64]
+    timeout-minutes: 90
+    permissions:
+      contents: write
+    defaults:
+      run:
+        shell: pwsh
+    env:
+      RELEASE_TAG: ${{ inputs.tag }}
+      RELEASE_TOOLING_COMMIT: ${{ github.workflow_sha }}
+      PUBLISH_RELEASE: ${{ inputs.publish }}
+      EXPECTED_RUNNER_NAME: DESKTOP-AI3E9IB
+      GITEE_REPOSITORY: warren-cao/auto-focus-factory-tool
+      UPDATE_SIGNING_KEY_ID: focusir-release-2026
+      MINIMUM_UPDATER_VERSION: '0.2.0'
+      DOTNET_NOLOGO: 'true'
+      DOTNET_CLI_TELEMETRY_OPTOUT: 'true'
+
+    steps:
+      - name: Verify PowerShell prerequisite without requiring pwsh
+        shell: powershell
+        run: |
+          if (-not (Get-Command pwsh -ErrorAction SilentlyContinue)) {
+            throw 'Install PowerShell 7.4+ (pwsh), add it to the runner account PATH, then restart the runner process/service.'
+          }
+
+      - name: Validate request and self-hosted environment
+        run: |
+          if ($env:GITHUB_REF -ne 'refs/heads/master') { throw 'Run this trusted workflow from master.' }
+          if ($env:RELEASE_TAG -cnotmatch '^v(0|[1-9]\d*)\.(0|[1-9]\d*)\.(0|[1-9]\d*)$') {
+            throw 'Release tag must be a canonical stable vX.Y.Z tag.'
+          }
+          if ($env:RUNNER_NAME -ine $env:EXPECTED_RUNNER_NAME) { throw 'Unexpected runner; no build or secrets have been loaded.' }
+          if ($PSVersionTable.PSVersion -lt [version]'7.4') { throw 'Install PowerShell 7.4 or later and restart the runner.' }
+          if (-not (Get-Command git -ErrorAction SilentlyContinue)) { throw 'Install Git and restart the runner.' }
+          Write-Host "Runner: $env:RUNNER_NAME; OS: $env:RUNNER_OS; architecture: $env:RUNNER_ARCH; PowerShell: $($PSVersionTable.PSVersion)"
+
+      - name: Checkout release tag and complete history
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: refs/tags/${{ env.RELEASE_TAG }}
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: Install .NET SDK into runner temporary directory
+        uses: actions/setup-dotnet@a98b56852c35b8e3190ac28c8c2271da59106c68 # v6
+        env:
+          # Do not require administrator rights to install the build SDK.
+          DOTNET_INSTALL_DIR: ${{ runner.temp }}/focusir-dotnet
+        with:
+          global-json-file: global.json
+
+      - name: Check signing secret and tag lineage
+        env:
+          UPDATE_SIGNING_KEY_PKCS8: ${{ secrets.UPDATE_SIGNING_KEY_PKCS8 }}
+        run: |
+          if ([string]::IsNullOrWhiteSpace($env:UPDATE_SIGNING_KEY_PKCS8)) { throw 'Configure UPDATE_SIGNING_KEY_PKCS8 first.' }
+          git merge-base --is-ancestor HEAD refs/remotes/origin/master
+          if ($LASTEXITCODE -ne 0) { throw 'The release commit must belong to master.' }
+
+      - name: Load trusted release tooling from workflow commit
+        run: |
+          $toolingDirectory = Join-Path $env:RUNNER_TEMP "focusir-tooling-$env:GITHUB_RUN_ID-$env:GITHUB_RUN_ATTEMPT"
+          $null = [IO.Directory]::CreateDirectory($toolingDirectory)
+          foreach ($name in @('release.ps1', 'Publish-GiteeRelease.ps1', 'Publish-GitHubRelease.ps1')) {
+            $toolingSource = @(git show ('{0}:eng/{1}' -f $env:RELEASE_TOOLING_COMMIT, $name))
+            if ($LASTEXITCODE -ne 0) { throw "Unable to load trusted tooling: $name" }
+            [IO.File]::WriteAllText((Join-Path $toolingDirectory $name), ($toolingSource -join "`n"), [Text.UTF8Encoding]::new($false))
+          }
+          [IO.File]::AppendAllText($env:GITHUB_ENV, "FOCUSIR_TOOLING=$toolingDirectory`n", [Text.UTF8Encoding]::new($false))
+
+      - name: Check Gitee connectivity and publication prerequisites
+        env:
+          GITEE_TOKEN: ${{ secrets.GITEE_TOKEN }}
+        run: |
+          $mode = if ($env:PUBLISH_RELEASE -eq 'true') { 'CheckRemote' } else { 'Diagnose' }
+          & "$env:FOCUSIR_TOOLING/Publish-GiteeRelease.ps1" -Tag $env:RELEASE_TAG -Mode $mode -SourceDirectory $env:GITHUB_WORKSPACE
+
+      - name: Build, test, publish and sign package
+        env:
+          UPDATE_SIGNING_KEY_PKCS8: ${{ secrets.UPDATE_SIGNING_KEY_PKCS8 }}
+        run: |
+          & "$env:FOCUSIR_TOOLING/release.ps1" -Tag $env:RELEASE_TAG -SourceDirectory $env:GITHUB_WORKSPACE
+
+      - name: Preserve the four signed release files
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: focusir-self-hosted-release-${{ env.RELEASE_TAG }}-${{ github.run_attempt }}
+          path: artifacts/release/*
+          if-no-files-found: error
+          compression-level: 0
+          retention-days: 30
+
+      - name: Publish complete stable release to Gitee
+        if: env.PUBLISH_RELEASE == 'true'
+        env:
+          GITEE_TOKEN: ${{ secrets.GITEE_TOKEN }}
+        run: |
+          & "$env:FOCUSIR_TOOLING/Publish-GiteeRelease.ps1" -Tag $env:RELEASE_TAG -SourceDirectory $env:GITHUB_WORKSPACE
+
+      - name: Publish the same files to GitHub Releases
+        if: env.PUBLISH_RELEASE == 'true'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          & "$env:FOCUSIR_TOOLING/Publish-GitHubRelease.ps1" -Tag $env:RELEASE_TAG -SourceDirectory $env:GITHUB_WORKSPACE
+
+      - name: Preserve test, build and upload diagnostics
+        if: always()
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: focusir-self-hosted-diagnostics-${{ env.RELEASE_TAG }}-${{ github.run_attempt }}
+          path: |
+            artifacts/test-results/**
+            artifacts/build/**
+            artifacts/release-logs/**
+          if-no-files-found: ignore
+          retention-days: 14

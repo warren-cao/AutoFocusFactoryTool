@@ -1,4 +1,4 @@
-#Requires -Version 7.0
+#Requires -Version 7.4
 [CmdletBinding()]
 param(
     [Parameter(Mandatory)]
@@ -8,16 +8,19 @@ param(
     [ValidatePattern('^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+$')]
     [string]$Repository = $(if ($env:GITEE_REPOSITORY) { $env:GITEE_REPOSITORY } else { 'warren-cao/auto-focus-factory-tool' }),
 
-    [ValidateSet('Publish', 'Validate', 'CheckRemote')]
+    [ValidateSet('Publish', 'Validate', 'CheckRemote', 'Diagnose')]
     [string]$Mode = 'Publish',
 
     [string]$ArtifactDirectory,
-    [string]$TargetCommit
+    [string]$TargetCommit,
+    [string]$SourceDirectory,
+    [ValidateRange(1, 120)]
+    [int]$RequestTimeoutMinutes = 15
 )
 
 Set-StrictMode -Version Latest
 $ErrorActionPreference = 'Stop'
-$repositoryRoot = Split-Path -Parent $PSScriptRoot
+$repositoryRoot = if ($SourceDirectory) { [IO.Path]::GetFullPath($SourceDirectory) } else { Split-Path -Parent $PSScriptRoot }
 if (-not $ArtifactDirectory) { $ArtifactDirectory = Join-Path $repositoryRoot 'artifacts/release' }
 $ArtifactDirectory = [IO.Path]::GetFullPath($ArtifactDirectory)
 $version = $Tag.Substring(1)
@@ -39,7 +42,7 @@ function Assert-LocalArtifacts {
         throw '发布清单与目标标签、平台、下载地址或 ZIP 长度不一致。'
     }
     if ($manifest.keyId -cnotmatch '^[a-z0-9][a-z0-9-]{0,63}$') { throw '签名 keyId 无效。' }
-    $publicKeyPath = Join-Path $PSScriptRoot "keys/$($manifest.keyId).pem"
+    $publicKeyPath = Join-Path $repositoryRoot "eng/keys/$($manifest.keyId).pem"
     $publicKey = [Security.Cryptography.ECDsa]::Create()
     try {
         $publicKey.ImportFromPem((Get-Content -LiteralPath $publicKeyPath -Raw -Encoding UTF8))
@@ -83,10 +86,90 @@ if ($TargetCommit -notmatch '^[a-fA-F0-9]{40}$') { throw '发布提交必须是�
 $handler = [Net.Http.HttpClientHandler]::new()
 $handler.AllowAutoRedirect = $false
 $client = [Net.Http.HttpClient]::new($handler)
-$client.Timeout = [TimeSpan]::FromMinutes(15)
+$client.Timeout = [TimeSpan]::FromMinutes($RequestTimeoutMinutes)
 $client.DefaultRequestHeaders.Authorization = [Net.Http.Headers.AuthenticationHeaderValue]::new('Bearer', $env:GITEE_TOKEN)
 $client.DefaultRequestHeaders.UserAgent.ParseAdd('FocusIR-Release/0.2.0')
 $apiRoot = "https://gitee.com/api/v5/repos/$Repository"
+
+# 白名单结构化日志：不记录正文、请求头、原始异常消息、代理地址或令牌。
+$logDirectory = Join-Path $repositoryRoot 'artifacts/release-logs'
+$null = [IO.Directory]::CreateDirectory($logDirectory)
+$diagnosticPath = Join-Path $logDirectory ("gitee-{0}-{1}.jsonl" -f $Mode, [guid]::NewGuid().ToString('N'))
+function Write-ReleaseDiagnostic {
+    param([string]$Event, [hashtable]$Fields = @{})
+    $record = [ordered]@{ timestampUtc = [DateTimeOffset]::UtcNow.ToString('O'); event = $Event }
+    foreach ($name in $Fields.Keys) { $record[$name] = $Fields[$name] }
+    $line = $record | ConvertTo-Json -Compress -Depth 6
+    [IO.File]::AppendAllText($diagnosticPath, $line + [Environment]::NewLine, [Text.UTF8Encoding]::new($false))
+    Write-Host $line
+}
+
+# 传输线程仅更新计数；日志仍由 PowerShell 主线程写，避免脚本回调跨 runspace。
+if (-not ('FocusIR.Release.UploadContent' -as [type])) {
+    Add-Type -TypeDefinition @'
+using System;
+using System.IO;
+using System.Net;
+using System.Net.Http;
+using System.Threading;
+using System.Threading.Tasks;
+namespace FocusIR.Release {
+    public sealed class UploadContent : HttpContent {
+        private readonly FileStream source;
+        private long bytesSent;
+        public long BytesSent => Interlocked.Read(ref bytesSent);
+        public long FileSize => source.Length;
+        public UploadContent(string path) {
+            source = new FileStream(path, FileMode.Open, FileAccess.Read, FileShare.Read,
+                                    81920, FileOptions.Asynchronous | FileOptions.SequentialScan);
+        }
+        protected override bool TryComputeLength(out long length) { length = source.Length; return true; }
+        protected override Task SerializeToStreamAsync(Stream stream, TransportContext context) {
+            return SerializeToStreamAsync(stream, context, CancellationToken.None);
+        }
+        protected override async Task SerializeToStreamAsync(Stream stream, TransportContext context,
+                                                              CancellationToken cancellationToken) {
+            byte[] buffer = new byte[81920];
+            int count;
+            while ((count = await source.ReadAsync(buffer, 0, buffer.Length, cancellationToken).ConfigureAwait(false)) != 0) {
+                await stream.WriteAsync(buffer, 0, count, cancellationToken).ConfigureAwait(false);
+                Interlocked.Add(ref bytesSent, count);
+            }
+        }
+        protected override void Dispose(bool disposing) {
+            if (disposing) source.Dispose();
+            base.Dispose(disposing);
+        }
+    }
+}
+'@
+}
+
+Write-ReleaseDiagnostic 'session' @{
+    mode = $Mode; tag = $Tag; hostName = 'gitee.com'; timeoutSeconds = $client.Timeout.TotalSeconds
+    runnerName = $env:RUNNER_NAME; runnerOS = $env:RUNNER_OS; runnerArch = $env:RUNNER_ARCH
+    powershellVersion = $PSVersionTable.PSVersion.ToString()
+    proxyConfigured = [bool]($env:HTTPS_PROXY -or $env:HTTP_PROXY -or $env:ALL_PROXY)
+}
+
+function Get-SafeExceptionDetails {
+    param([Exception]$Exception)
+    $details = [Collections.Generic.List[object]]::new()
+    $isTimeout = $false
+    $current = $Exception
+    for ($depth = 0; $null -ne $current -and $depth -lt 8; $depth++) {
+        $item = @{ type = $current.GetType().FullName; hresult = $current.HResult }
+        if ($current -is [TimeoutException] -or $current -is [OperationCanceledException]) { $isTimeout = $true }
+        if ($current -is [Net.Http.HttpRequestException]) {
+            $item['httpRequestError'] = [string]$current.HttpRequestError
+            $item['statusCode'] = if ($null -ne $current.StatusCode) { [int]$current.StatusCode } else { $null }
+        }
+        if ($current -is [Net.Sockets.SocketException]) { $item['socketError'] = [string]$current.SocketErrorCode }
+        $details.Add($item)
+        $current = $current.InnerException
+    }
+    return @{ category = $(if ($isTimeout) { 'TimeoutOrCancellation' } else { 'TransportError' }); exceptions = @($details.ToArray()) }
+}
 
 function Invoke-GiteeApi {
     param(
@@ -94,24 +177,71 @@ function Invoke-GiteeApi {
         [Parameter(Mandatory)][string]$Path,
         [object]$Body,
         [Net.Http.HttpContent]$Content,
+        [object]$UploadContent,
+        [string]$FileName,
         [switch]$AllowNotFound
     )
+    $requestId = [guid]::NewGuid().ToString('N')
+    $safePath = $Path.Split('?')[0]
+    $timer = [Diagnostics.Stopwatch]::StartNew()
     $request = [Net.Http.HttpRequestMessage]::new([Net.Http.HttpMethod]::new($Method), "$apiRoot/$Path")
     try {
         if ($null -ne $Content) { $request.Content = $Content }
         elseif ($null -ne $Body) {
             $request.Content = [Net.Http.StringContent]::new(($Body | ConvertTo-Json -Depth 8), [Text.Encoding]::UTF8, 'application/json')
         }
-        try { $response = $client.SendAsync($request).GetAwaiter().GetResult() }
-        catch { throw "Gitee API $Method $Path 网络连接失败；请检查节点网络。" }
+        Write-ReleaseDiagnostic 'request-start' @{
+            requestId = $requestId; method = $Method; path = $safePath; fileName = $FileName
+            fileSize = $(if ($null -ne $UploadContent) { $UploadContent.FileSize } else { $null })
+            contentLength = $(if ($null -ne $request.Content) { $request.Content.Headers.ContentLength } else { 0 })
+        }
         try {
+            $pending = $client.SendAsync($request)
+            $lastProgressSeconds = 0.0
+            while (-not $pending.IsCompleted) {
+                # 不使用 Task.Wait：失败时让 GetResult 保留完整的内部异常类型。
+                Start-Sleep -Milliseconds 250
+                if ($null -ne $UploadContent -and $timer.Elapsed.TotalSeconds - $lastProgressSeconds -ge 15) {
+                    $lastProgressSeconds = $timer.Elapsed.TotalSeconds
+                    Write-ReleaseDiagnostic 'upload-progress' @{
+                        requestId = $requestId; fileName = $FileName; fileSize = $UploadContent.FileSize
+                        bytesSent = $UploadContent.BytesSent; elapsedSeconds = [Math]::Round($timer.Elapsed.TotalSeconds, 2)
+                        # 这里只表示已写入传输流，不代表 Gitee 已接收或已落盘。
+                        waitingForResponse = ($UploadContent.BytesSent -eq $UploadContent.FileSize)
+                    }
+                }
+            }
+            $response = $pending.GetAwaiter().GetResult()
+        }
+        catch {
+            $failure = Get-SafeExceptionDetails $_.Exception
+            Write-ReleaseDiagnostic 'request-error' @{
+                requestId = $requestId; method = $Method; path = $safePath; fileName = $FileName
+                elapsedSeconds = [Math]::Round($timer.Elapsed.TotalSeconds, 2)
+                bytesSent = $(if ($null -ne $UploadContent) { $UploadContent.BytesSent } else { $null })
+                category = $failure.category; exceptions = $failure.exceptions
+            }
+            throw "Gitee API $Method $safePath 请求失败（$($failure.category)，耗时 $([Math]::Round($timer.Elapsed.TotalSeconds, 1)) 秒，requestId=$requestId）；详见 artifacts/release-logs。"
+        }
+        try {
+            Write-ReleaseDiagnostic 'request-response' @{
+                requestId = $requestId; method = $Method; path = $safePath; statusCode = [int]$response.StatusCode
+                elapsedSeconds = [Math]::Round($timer.Elapsed.TotalSeconds, 2)
+                bytesSent = $(if ($null -ne $UploadContent) { $UploadContent.BytesSent } else { $null })
+            }
             if ($AllowNotFound -and [int]$response.StatusCode -eq 404) { return $null }
             if (-not $response.IsSuccessStatusCode) {
                 # 不输出响应正文或请求体，避免凭证被服务端回显到日志。
-                throw "Gitee API $Method $Path 返回 HTTP $([int]$response.StatusCode)，请检查令牌权限、仓库状态和附件额度。"
+                throw "Gitee API $Method $safePath 返回 HTTP $([int]$response.StatusCode)（requestId=$requestId），请检查令牌权限、仓库状态和附件额度。"
             }
             $text = $response.Content.ReadAsStringAsync().GetAwaiter().GetResult()
-            if ($text) { return ($text | ConvertFrom-Json) }
+            if ($text) {
+                try { return ($text | ConvertFrom-Json) }
+                catch {
+                    Write-ReleaseDiagnostic 'response-parse-error' @{ requestId = $requestId; exceptionType = $_.Exception.GetType().FullName }
+                    throw "Gitee 响应不是有效 JSON（requestId=$requestId）；响应正文未写入日志。"
+                }
+            }
         }
         finally { $response.Dispose() }
     }
@@ -135,6 +265,16 @@ try {
         throw 'Gitee 版本标签缺失或指向不同提交。请先同步同一标签，禁止把不同源码发布为同一版本。'
     }
     $existing = Invoke-GiteeApi -Method GET -Path "releases/tags/$Tag" -AllowNotFound
+    if ($Mode -eq 'Diagnose') {
+        if ($null -ne $existing) {
+            $attachments = @(Invoke-GiteeApi -Method GET -Path "releases/$($existing.id)/attach_files?page=1&per_page=100")
+            Write-ReleaseDiagnostic 'existing-release' @{
+                releaseId = $existing.id; prerelease = $existing.prerelease; attachmentCount = $attachments.Count
+            }
+        }
+        Write-Host 'Gitee 只读诊断完成；没有创建、上传、修改或删除 Release。此检查不证明大文件上传一定成功。'
+        return
+    }
     if ($null -ne $existing) {
         throw "Gitee 已存在 $Tag 的 Release，禁止覆盖。失败后的预发布残留或 GitHub 镜像补发请按 eng/GITHUB_ACTIONS.md 处理。"
     }
@@ -163,11 +303,10 @@ try {
             $form = [Net.Http.MultipartFormDataContent]::new()
             try {
                 $form.Add([Net.Http.StringContent]::new($env:GITEE_TOKEN), 'access_token')
-                $stream = [IO.File]::OpenRead($filePath)
-                $fileContent = [Net.Http.StreamContent]::new($stream)
+                $fileContent = [FocusIR.Release.UploadContent]::new($filePath)
                 $fileContent.Headers.ContentType = [Net.Http.Headers.MediaTypeHeaderValue]::new('application/octet-stream')
                 $form.Add($fileContent, 'file', $fileName)
-                $null = Invoke-GiteeApi -Method POST -Path "releases/$releaseId/attach_files" -Content $form
+                $null = Invoke-GiteeApi -Method POST -Path "releases/$releaseId/attach_files" -Content $form -UploadContent $fileContent -FileName $fileName
                 Write-Host "附件已上传：$fileName"
             }
             finally { $form.Dispose() }

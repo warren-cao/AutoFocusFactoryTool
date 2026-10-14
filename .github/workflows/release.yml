@@ -77,36 +77,30 @@ jobs:
           git merge-base --is-ancestor HEAD refs/remotes/origin/master
           if ($LASTEXITCODE -ne 0) { throw 'The release commit must belong to master.' }
 
+      - name: Load trusted release tooling from workflow commit
+        run: |
+          $toolingDirectory = Join-Path $env:RUNNER_TEMP "focusir-tooling-$env:GITHUB_RUN_ID-$env:GITHUB_RUN_ATTEMPT"
+          $null = [IO.Directory]::CreateDirectory($toolingDirectory)
+          foreach ($name in @('release.ps1', 'Publish-GiteeRelease.ps1', 'Publish-GitHubRelease.ps1')) {
+            $toolingSource = @(git show ('{0}:eng/{1}' -f $env:RELEASE_TOOLING_COMMIT, $name))
+            if ($LASTEXITCODE -ne 0) { throw "Unable to load trusted tooling: $name" }
+            [IO.File]::WriteAllText((Join-Path $toolingDirectory $name), ($toolingSource -join "`n"), [Text.UTF8Encoding]::new($false))
+          }
+          [IO.File]::AppendAllText($env:GITHUB_ENV, "FOCUSIR_TOOLING=$toolingDirectory`n", [Text.UTF8Encoding]::new($false))
+
       - name: Check Gitee publication prerequisites
         if: env.PUBLISH_RELEASE == 'true'
         env:
           GITEE_TOKEN: ${{ secrets.GITEE_TOKEN }}
         run: |
-          ./eng/Publish-GiteeRelease.ps1 -Tag $env:RELEASE_TAG -Mode CheckRemote
+          & "$env:FOCUSIR_TOOLING/Publish-GiteeRelease.ps1" -Tag $env:RELEASE_TAG -Mode CheckRemote -SourceDirectory $env:GITHUB_WORKSPACE
 
       - name: Build, test, publish and sign package
         env:
           UPDATE_SIGNING_KEY_PKCS8: ${{ secrets.UPDATE_SIGNING_KEY_PKCS8 }}
         run: |
-          # Use tooling pinned to this workflow's commit, not an old script in the source tag.
-          # Application source, version, changelog and keys still come from RELEASE_TAG.
-          $toolingSpec = '{0}:eng/release.ps1' -f $env:RELEASE_TOOLING_COMMIT
-          $toolingSource = @(git show $toolingSpec)
-          if ($LASTEXITCODE -ne 0) { throw 'Unable to load release tooling from the workflow commit.' }
-          $toolingPath = Join-Path $env:RUNNER_TEMP 'focusir-release.ps1'
-          [IO.File]::WriteAllText($toolingPath, ($toolingSource -join "`n"), [Text.UTF8Encoding]::new($false))
-          & $toolingPath -Tag $env:RELEASE_TAG -SourceDirectory $env:GITHUB_WORKSPACE
-
-      - name: Preserve test results and build logs
-        if: always()
-        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
-        with:
-          name: focusir-diagnostics-${{ env.RELEASE_TAG }}-${{ github.run_attempt }}
-          path: |
-            artifacts/test-results/**
-            artifacts/build/**
-          if-no-files-found: ignore
-          retention-days: 14
+          # Source, version, changelog and public keys still come from RELEASE_TAG.
+          & "$env:FOCUSIR_TOOLING/release.ps1" -Tag $env:RELEASE_TAG -SourceDirectory $env:GITHUB_WORKSPACE
 
       - name: Preserve the four signed release files
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
@@ -122,17 +116,23 @@ jobs:
         env:
           GITEE_TOKEN: ${{ secrets.GITEE_TOKEN }}
         run: |
-          ./eng/Publish-GiteeRelease.ps1 -Tag $env:RELEASE_TAG
+          & "$env:FOCUSIR_TOOLING/Publish-GiteeRelease.ps1" -Tag $env:RELEASE_TAG -SourceDirectory $env:GITHUB_WORKSPACE
 
       - name: Publish the same files to GitHub Releases
         if: env.PUBLISH_RELEASE == 'true'
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
-          $manifest = Get-Content artifacts/release/update-manifest.json -Raw | ConvertFrom-Json
-          $notesPath = Join-Path $env:RUNNER_TEMP 'focusir-release-notes.md'
-          [IO.File]::WriteAllText($notesPath, $manifest.releaseNotes, [Text.UTF8Encoding]::new($false))
-          $files = @(Get-ChildItem artifacts/release -File | ForEach-Object FullName)
-          # --verify-tag prevents accidental creation of a tag at the wrong commit.
-          gh release create $env:RELEASE_TAG @files --repo $env:GITHUB_REPOSITORY --verify-tag --title "FocusIR Workbench $env:RELEASE_TAG" --notes-file $notesPath
-          if ($LASTEXITCODE -ne 0) { throw 'GitHub Release publication failed; Gitee may already be complete. See eng/GITHUB_ACTIONS.md.' }
+          & "$env:FOCUSIR_TOOLING/Publish-GitHubRelease.ps1" -Tag $env:RELEASE_TAG -SourceDirectory $env:GITHUB_WORKSPACE
+
+      - name: Preserve test, build and upload diagnostics
+        if: always()
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: focusir-diagnostics-${{ env.RELEASE_TAG }}-${{ github.run_attempt }}
+          path: |
+            artifacts/test-results/**
+            artifacts/build/**
+            artifacts/release-logs/**
+          if-no-files-found: ignore
+          retention-days: 14
