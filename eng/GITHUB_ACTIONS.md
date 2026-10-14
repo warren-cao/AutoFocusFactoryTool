@@ -172,6 +172,8 @@ GitHub 上传采用系统 `curl.exe` 的二进制流式 POST，20 秒连接超�
 
 自托管主机已有经过校验的原始备份时，可显式选择 `use_local_backup=true`。仅从固定项目目录 `F:/Project/auto-focus-factory-tool/artifacts/migration-<tag>-<source_run_id>/release` 或 `bridge-release` 读取四个原始文件，仍核对原运行来源、签名及哈希。默认仍下载 GitHub 的不可变制品；不接受任意本机路径，也不会重新签名或编译。
 
+此显式本机恢复模式也会通过 GitHub API 独立核对源码标签，再从固定源码缓存创建无硬链接的独立临时克隆。源码标签必须与 GitHub 完全一致，可信工作流提交必须已在缓存中；否则拒绝使用。只检出已核实的原始源码提交，工具固定取自调用方工作流提交，不修改源码缓存、工作站程序或旧工作区。默认远程模式仍使用标准 checkout；本机模式不依赖 `github.com` Git 拉取链路。
+
 也可以由维护者手动执行：
 
 1. 从该次运行下载 `focusir-self-hosted-release-v0.2.0-1` 制品。
