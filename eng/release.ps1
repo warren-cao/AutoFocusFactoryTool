@@ -141,9 +141,13 @@ function ConvertTo-GiteeBoolean {
 function Get-GiteeStableReleases {
     param([Parameter(Mandatory)][string]$RepositoryPath)
 
-    $headers = @{ Accept = 'application/json' }
-    if (-not [string]::IsNullOrWhiteSpace($env:GITEE_TOKEN)) {
-        $headers.Authorization = "token $($env:GITEE_TOKEN)"
+    if ([string]::IsNullOrWhiteSpace($env:GITEE_TOKEN)) {
+        throw '读取 Gitee Release 列表需要 GITEE_TOKEN；请配置 GitHub Actions Secret，并在构建签名步骤的 env 中注入该令牌。UPDATE_SIGNING_KEY_PKCS8 仅用于签名，不能代替 Gitee 令牌。'
+    }
+    $headers = @{
+        Accept = 'application/json'
+        Authorization = "Bearer $($env:GITEE_TOKEN)"
+        'User-Agent' = 'FocusIR-Release'
     }
 
     $releases = [Collections.Generic.List[object]]::new()
@@ -156,7 +160,15 @@ function Get-GiteeStableReleases {
             $response = Invoke-RestMethod -Method Get -Uri $uri -Headers $headers -TimeoutSec 30
         }
         catch {
-            throw "无法读取 Gitee Release 列表，发布已终止：$($_.Exception.Message)"
+            $responseProperty = $_.Exception.PSObject.Properties['Response']
+            if ($null -ne $responseProperty -and $null -ne $responseProperty.Value) {
+                $statusCode = [int]$responseProperty.Value.StatusCode
+                if ($statusCode -in @(401, 403)) {
+                    throw "读取 Gitee Release 列表返回 HTTP $statusCode；请检查 GITEE_TOKEN 是否有效、是否有目标仓库访问权限，以及 Gitee API 是否限流。签名私钥不参与此请求。"
+                }
+                throw "读取 Gitee Release 列表返回 HTTP $statusCode，发布已终止。"
+            }
+            throw '无法连接 Gitee Release 列表接口，发布已终止；请检查构建主机网络和代理配置。'
         }
 
         if ($null -eq $response -or $response -isnot [Array]) {

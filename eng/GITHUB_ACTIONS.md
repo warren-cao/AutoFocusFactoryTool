@@ -73,7 +73,11 @@ gh workflow run release-self-hosted.yml --repo warren-cao/AutoFocusFactoryTool -
 
 工作流验证主分支、稳定标签和 runner 名称，检出源码标签与完整历史，确认标签提交属于 `origin/master`。发布工具从本次工作流提交 `github.workflow_sha` 加载到 runner 临时目录；应用源码、版本、更新日志、公钥仍来自选中的标签。
 
-`eng/release.ps1` 检查干净工作区、标签/版本/更新日志一致、客户端默认升级仓与发布仓一致、版本递增及目标版本未发布，再调用现有 `eng/ci.ps1`，完成锁定还原、警告即错误编译、现有纯软件测试、自包含打包和签名。正式发布的四个文件为：
+`eng/release.ps1` 检查干净工作区、标签/版本/更新日志一致、客户端默认升级仓与发布仓一致、版本递增及目标版本未发布，再调用现有 `eng/ci.ps1`，完成锁定还原、警告即错误编译、现有纯软件测试、自包含打包和签名。
+
+Gitee 预检查、构建签名和 Gitee 上传步骤均须分别注入 `GITEE_TOKEN`。构建脚本需要该令牌查询已有版本，并使用与上传脚本相同的 Bearer 认证。步骤级环境变量不会自动传递到后续步骤；`UPDATE_SIGNING_KEY_PKCS8` 只用于清单签名，不能代替 Gitee 令牌。
+
+正式发布的四个文件为：
 
 ```text
 FocusIR.Workbench-v0.2.2-win-x64.zip
@@ -97,7 +101,7 @@ https://gitee.com/api/v5/repos/warren-cao/focusir-workbench-releases/releases/la
 Actions 保存签名四件套 `focusir-self-hosted-release-<tag>-<attempt>` 30 天，诊断制品保存 14 天。上传诊断位于 `artifacts/release-logs/`，包括请求状态、附件大小、传输进度及错误分类，不记录令牌、私钥或原始响应正文。传输进度不代表服务端已完整保存附件。
 
 - 缺少 Secret、runner 离线、PowerShell 未加入 PATH：修复对应配置；尚未创建 Release 时，可重新手动运行。
-- Gitee 401/403：检查令牌权限及限流；公开可读不等于有发布权限。
+- Gitee 401/403：检查对应步骤是否注入 `GITEE_TOKEN`、令牌权限及限流；前一个预检查成功不代表后续构建步骤已取得令牌。不要更换签名私钥来处理 HTTP 权限错误。
 - Gitee 无发布锚点：创建 README 初始化提交，核对默认分支或 `GITEE_RELEASE_TARGET`。
 - 同名 Release 已存在：不要重跑完整发布覆盖，也不要移动源码标签。检查实际状态和原始附件。
 - Gitee 已正式发布、GitHub 失败：保留 Gitee Release，从原运行下载四件套，使用 `Publish-GitHubRelease.ps1` 补发；已有 GitHub 草稿时显式传入其 `-ExistingReleaseId`。

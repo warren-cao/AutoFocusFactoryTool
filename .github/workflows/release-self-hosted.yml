@@ -108,6 +108,7 @@ jobs:
 
       - name: Build, test, publish and sign package
         env:
+          GITEE_TOKEN: ${{ secrets.GITEE_TOKEN }}
           UPDATE_SIGNING_KEY_PKCS8: ${{ secrets.UPDATE_SIGNING_KEY_PKCS8 }}
         run: |
           & "$env:FOCUSIR_TOOLING/release.ps1" -Tag $env:RELEASE_TAG -SourceDirectory $env:GITHUB_WORKSPACE

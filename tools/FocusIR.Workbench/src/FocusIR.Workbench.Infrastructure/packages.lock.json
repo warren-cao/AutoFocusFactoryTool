@@ -5,7 +5,7 @@
       "focusir.workbench.application": {
         "type": "Project",
         "dependencies": {
-          "FocusIR.Workbench.Domain": "[0.3.0, )"
+          "FocusIR.Workbench.Domain": "[0.3.1, )"
         }
       },
       "focusir.workbench.domain": {
