@@ -42,7 +42,7 @@ public sealed class UpdateManifestTests
     }
 
     internal static UpdateManifest CreateManifest(string packageUrl =
-        "https://gitee.com/warren-cao/auto-focus-factory-tool/releases/download/v0.2.0/FocusIR.Workbench-v0.2.0-win-x64.zip") =>
+        "https://gitee.com/warren-cao/focusir-workbench-releases/releases/download/v0.2.0/FocusIR.Workbench-v0.2.0-win-x64.zip") =>
         new(
             1,
             "0.2.0",

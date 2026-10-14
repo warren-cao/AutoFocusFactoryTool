@@ -194,17 +194,17 @@ public sealed class GiteeUpdateServiceTests
     private sealed class UpdateFixture : IDisposable
     {
         private const string LatestUri =
-            "https://gitee.com/api/v5/repos/warren-cao/auto-focus-factory-tool/releases/latest";
+            "https://gitee.com/api/v5/repos/warren-cao/focusir-workbench-releases/releases/latest";
         private const string AssetsUri =
-            "https://gitee.com/api/v5/repos/warren-cao/auto-focus-factory-tool/releases/42/attach_files?page=1&per_page=100&direction=asc";
+            "https://gitee.com/api/v5/repos/warren-cao/focusir-workbench-releases/releases/42/attach_files?page=1&per_page=100&direction=asc";
         private const string ManifestUri =
-            "https://gitee.com/warren-cao/auto-focus-factory-tool/releases/download/v0.2.0/update-manifest.json";
+            "https://gitee.com/warren-cao/focusir-workbench-releases/releases/download/v0.2.0/update-manifest.json";
         private const string SignatureUri =
-            "https://gitee.com/warren-cao/auto-focus-factory-tool/releases/download/v0.2.0/update-manifest.sig";
+            "https://gitee.com/warren-cao/focusir-workbench-releases/releases/download/v0.2.0/update-manifest.sig";
         private const string ChecksumsUri =
-            "https://gitee.com/warren-cao/auto-focus-factory-tool/releases/download/v0.2.0/SHA256SUMS.txt";
+            "https://gitee.com/warren-cao/focusir-workbench-releases/releases/download/v0.2.0/SHA256SUMS.txt";
         private const string DefaultPackageUri =
-            "https://gitee.com/warren-cao/auto-focus-factory-tool/releases/download/v0.2.0/FocusIR.Workbench-v0.2.0-win-x64.zip";
+            "https://gitee.com/warren-cao/focusir-workbench-releases/releases/download/v0.2.0/FocusIR.Workbench-v0.2.0-win-x64.zip";
 
         private readonly ECDsa _signingKey = ECDsa.Create(ECCurve.NamedCurves.nistP256);
         private readonly HttpClient _httpClient;
@@ -270,9 +270,7 @@ public sealed class GiteeUpdateServiceTests
                 new Dictionary<string, string>(StringComparer.Ordinal)
                 {
                     ["focusir-release-2026"] = trustedKey
-                },
-                // 这些既有协议夹具保留旧仓地址，显式验证旧升级源仍兼容。
-                new GiteeUpdateOptions { Repository = "auto-focus-factory-tool" });
+                });
         }
 
         public FakeHttpMessageHandler Handler { get; }

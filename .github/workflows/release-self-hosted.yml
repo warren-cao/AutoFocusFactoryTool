@@ -1,12 +1,12 @@
 name: FocusIR Release (Self-hosted)
 
 # Never run untrusted PRs on a persistent factory/build workstation.
-# Manual only: the existing cloud workflow keeps ownership of tag-push releases.
+# Manual only: push the source tag first, then dispatch this workflow from master.
 on:
   workflow_dispatch:
     inputs:
       tag:
-        description: 'Existing stable tag, e.g. v0.2.0'
+        description: 'Existing stable tag, e.g. v0.2.2'
         required: true
         type: string
       publish:
@@ -14,16 +14,11 @@ on:
         required: true
         default: false
         type: boolean
-      create_bridge_tag:
-        description: 'One-time migration: create v0.2.1 from this master commit (requires publish=true)'
-        required: true
-        default: false
-        type: boolean
 
 permissions:
   contents: read
 
-# Share the lock with the cloud release workflow; do not upload concurrently.
+# Serialize manual releases; do not upload concurrently.
 concurrency:
   group: focusir-stable-release
   cancel-in-progress: false
@@ -43,12 +38,9 @@ jobs:
       RELEASE_TAG: ${{ inputs.tag }}
       RELEASE_TOOLING_COMMIT: ${{ github.workflow_sha }}
       PUBLISH_RELEASE: ${{ inputs.publish }}
-      CREATE_BRIDGE_TAG: ${{ inputs.create_bridge_tag }}
       EXPECTED_RUNNER_NAME: DESKTOP-AI3E9IB
       GITEE_REPOSITORY: warren-cao/focusir-workbench-releases
       GITEE_RELEASE_TARGET: ${{ vars.GITEE_RELEASE_TARGET }}
-      GITEE_BRIDGE_REPOSITORY: ${{ inputs.tag == 'v0.2.1' && 'warren-cao/auto-focus-factory-tool' || '' }}
-      GITEE_BRIDGE_TARGET: ${{ vars.GITEE_BRIDGE_TARGET }}
       UPDATE_SIGNING_KEY_ID: focusir-release-2026
       MINIMUM_UPDATER_VERSION: '0.2.0'
       DOTNET_NOLOGO: 'true'
@@ -68,40 +60,10 @@ jobs:
           if ($env:RELEASE_TAG -cnotmatch '^v(0|[1-9]\d*)\.(0|[1-9]\d*)\.(0|[1-9]\d*)$') {
             throw 'Release tag must be a canonical stable vX.Y.Z tag.'
           }
-          if ($env:CREATE_BRIDGE_TAG -eq 'true' -and ($env:RELEASE_TAG -cne 'v0.2.1' -or $env:PUBLISH_RELEASE -ne 'true')) {
-            throw 'Creating a source tag is only allowed for the explicitly approved v0.2.1 migration publication.'
-          }
           if ($env:RUNNER_NAME -ine $env:EXPECTED_RUNNER_NAME) { throw 'Unexpected runner; no build or secrets have been loaded.' }
           if ($PSVersionTable.PSVersion -lt [version]'7.4') { throw 'Install PowerShell 7.4 or later and restart the runner.' }
           if (-not (Get-Command git -ErrorAction SilentlyContinue)) { throw 'Install Git and restart the runner.' }
           Write-Host "Runner: $env:RUNNER_NAME; OS: $env:RUNNER_OS; architecture: $env:RUNNER_ARCH; PowerShell: $($PSVersionTable.PSVersion)"
-
-      - name: Create the explicitly approved migration tag without triggering the cloud release
-        if: env.CREATE_BRIDGE_TAG == 'true'
-        env:
-          GH_TOKEN: ${{ github.token }}
-        run: |
-          $headers = @{ Authorization = "Bearer $env:GH_TOKEN"; Accept = 'application/vnd.github+json'; 'User-Agent' = 'FocusIR-Migration' }
-          $root = "https://api.github.com/repos/$env:GITHUB_REPOSITORY"
-          try {
-            $props = Invoke-RestMethod -Uri "$root/contents/Directory.Build.props?ref=$env:GITHUB_SHA" -Headers $headers -TimeoutSec 60
-            [xml]$xml = [Text.Encoding]::UTF8.GetString([Convert]::FromBase64String($props.content))
-            if ([string]$xml.Project.PropertyGroup.VersionPrefix -cne '0.2.1') { throw 'Source version does not match the approved migration.' }
-            $status = 0
-            $ref = Invoke-RestMethod -Uri "$root/git/ref/tags/$env:RELEASE_TAG" -Headers $headers -SkipHttpErrorCheck -StatusCodeVariable status -TimeoutSec 60
-            if ($status -eq 404) {
-              $body = @{ ref = "refs/tags/$env:RELEASE_TAG"; sha = $env:GITHUB_SHA } | ConvertTo-Json -Compress
-              $ref = Invoke-RestMethod -Method Post -Uri "$root/git/refs" -Headers $headers -ContentType 'application/json' -Body $body -TimeoutSec 60
-            } elseif ($status -ne 200) { throw 'Unable to confirm source tag state.' }
-            $target = $ref.object
-            for ($depth = 0; $target.type -eq 'tag' -and $depth -lt 5; $depth++) {
-              $annotated = Invoke-RestMethod -Uri "$root/git/tags/$($target.sha)" -Headers $headers -TimeoutSec 60
-              $target = $annotated.object
-            }
-            if ($target.type -cne 'commit' -or $target.sha -cne $env:GITHUB_SHA) { throw 'Existing tag points to a different commit; never move it.' }
-            # A tag created by GITHUB_TOKEN does not trigger another push workflow.
-            Write-Host "Approved migration tag verified at $env:GITHUB_SHA. No existing tag was moved."
-          } catch { throw 'Unable to prepare migration source tag. Inspect its actual state before retrying; no force update or deletion is performed.' }
 
       - name: Checkout release tag and complete history
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -143,9 +105,6 @@ jobs:
         run: |
           $mode = if ($env:PUBLISH_RELEASE -eq 'true') { 'CheckRemote' } else { 'Diagnose' }
           & "$env:FOCUSIR_TOOLING/Publish-GiteeRelease.ps1" -Tag $env:RELEASE_TAG -Mode $mode -SourceDirectory $env:GITHUB_WORKSPACE
-          if ($env:GITEE_BRIDGE_REPOSITORY) {
-            & "$env:FOCUSIR_TOOLING/Publish-GiteeRelease.ps1" -Tag $env:RELEASE_TAG -Mode $mode -Repository $env:GITEE_BRIDGE_REPOSITORY -GiteeTargetRef $env:GITEE_BRIDGE_TARGET -SourceDirectory $env:GITHUB_WORKSPACE
-          }
 
       - name: Build, test, publish and sign package
         env:
@@ -158,16 +117,6 @@ jobs:
         with:
           name: focusir-self-hosted-release-${{ env.RELEASE_TAG }}-${{ github.run_attempt }}
           path: artifacts/release/*
-          if-no-files-found: error
-          compression-level: 0
-          retention-days: 30
-
-      - name: Preserve the independently signed legacy bridge files
-        if: env.GITEE_BRIDGE_REPOSITORY != ''
-        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
-        with:
-          name: focusir-self-hosted-bridge-${{ env.RELEASE_TAG }}-${{ github.run_attempt }}
-          path: artifacts/bridge-release/*
           if-no-files-found: error
           compression-level: 0
           retention-days: 30
@@ -185,13 +134,6 @@ jobs:
           GH_TOKEN: ${{ github.token }}
         run: |
           & "$env:FOCUSIR_TOOLING/Publish-GitHubRelease.ps1" -Tag $env:RELEASE_TAG -SourceDirectory $env:GITHUB_WORKSPACE
-
-      - name: Publish legacy bridge last after the new feed and GitHub backup are ready
-        if: env.PUBLISH_RELEASE == 'true' && env.GITEE_BRIDGE_REPOSITORY != ''
-        env:
-          GITEE_TOKEN: ${{ secrets.GITEE_TOKEN }}
-        run: |
-          & "$env:FOCUSIR_TOOLING/Publish-GiteeRelease.ps1" -Tag $env:RELEASE_TAG -Repository $env:GITEE_BRIDGE_REPOSITORY -GiteeTargetRef $env:GITEE_BRIDGE_TARGET -SourceDirectory $env:GITHUB_WORKSPACE -ArtifactDirectory artifacts/bridge-release
 
       - name: Preserve test, build and upload diagnostics
         if: always()

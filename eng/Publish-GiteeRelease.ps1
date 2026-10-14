@@ -13,7 +13,6 @@ param(
 
     [string]$ArtifactDirectory,
     # 仅用于追溯 GitHub 源码；不要求这个提交存在于 Gitee。
-    [Alias('TargetCommit')]
     [string]$SourceCommit,
     # Gitee 仅发布仓中的 README 分支/提交；留空则取该仓库默认分支。
     [string]$GiteeTargetRef = $env:GITEE_RELEASE_TARGET,
