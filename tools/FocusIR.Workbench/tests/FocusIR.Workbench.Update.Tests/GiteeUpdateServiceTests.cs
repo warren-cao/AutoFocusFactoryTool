@@ -270,7 +270,9 @@ public sealed class GiteeUpdateServiceTests
                 new Dictionary<string, string>(StringComparer.Ordinal)
                 {
                     ["focusir-release-2026"] = trustedKey
-                });
+                },
+                // 这些既有协议夹具保留旧仓地址，显式验证旧升级源仍兼容。
+                new GiteeUpdateOptions { Repository = "auto-focus-factory-tool" });
         }
 
         public FakeHttpMessageHandler Handler { get; }

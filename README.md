@@ -13,7 +13,8 @@
 | `tools/FocusIR.Workbench/scripts/Start-Workbench.ps1` | 本机启动脚本 |
 | `contracts/v1/` | Socket v1 方法目录、JSON Schema 和消息示例 |
 | `eng/` | CI、正式发布、升级清单签名及静态校验脚本 |
-| `.gitee/` | Gitee Go 的 CI 与 Release 流水线模板 |
+| `.github/workflows/` | 云端、自托管发布与原始签名制品收尾工作流 |
+| `.gitee/` | 历史 Gitee Go 模板，当前不再启用 |
 | `CODE_MODULES.md` | 模块、关键代码与调用关系 |
 
 配套设备源码位于设备编译主机的 `zs_work/module/focusIR/`，其 `README.md` 与 `CODE_MODULES.md` 说明设备实现。上位机与设备端的 RPC 方法和字段应配套更新。
@@ -49,7 +50,9 @@ dotnet build .\FocusIR.Workbench.sln -c Release --no-restore
 
 ## 升级与自动发布
 
-当前推荐使用 GitHub Actions 的云端 Windows 节点构建并发布到 Gitee 与 GitHub Releases，无需 Gitee 企业版。工作流为 `.github/workflows/release.yml`，配置两个 Secrets 后按 [GitHub Actions 发布指南](eng/GITHUB_ACTIONS.md) 同步源码并推送版本标签。
+源码仅保存在 GitHub（可以私有），新的公开二进制发布仓为 `warren-cao/focusir-workbench-releases`。支持 GitHub 云端 Windows 和自托管 `DESKTOP-AI3E9IB`，无需 Gitee 企业版；不再向 Gitee 推送源码。工作流和配置见 [GitHub Actions 发布指南](eng/GITHUB_ACTIONS.md)。
+
+当前准备的 `v0.2.1` 为迁移桥接版：新仓先发布，再备份到 GitHub，最后在旧 `auto-focus-factory-tool` 仓发布同一 ZIP 的独立签名清单。旧客户端升级后查询新仓；下一版只发布新仓。新仓须先在 Gitee 网页创建并公开，仅初始化 README。源码仓私有化前须保留旧升级源，直到工位全部迁移完成。
 
 应用版本统一配置在 `Directory.Build.props` 的 `VersionPrefix`。稳定版本使用 `v主版本.次版本.修订版本` 标签，并通过公开 Gitee Release 发布 `win-x64` 自包含 ZIP、升级清单、ECDSA 签名和 SHA-256 校验文件。
 
@@ -63,8 +66,8 @@ dotnet build .\FocusIR.Workbench.sln -c Release --no-restore
 
 基线安装成功后，开始菜单入口固定指向用户目录中的启动器，后续版本由应用内“检查更新”完成。签名或哈希校验失败时不得绕过检查继续安装。
 
-Gitee CI 在 `master` 推送和代码评审时运行；正式发布仅由受保护的 `vX.Y.Z` 标签触发。发布节点必须是专用 Windows x64 主机，并在 Gitee UI 中绑定主机组、保护分支/标签和加密签名变量。完整接入步骤、密钥轮换和本地发布命令见 [`eng/README.md`](eng/README.md)。
+GitHub 云端正式发布由 `vX.Y.Z` 标签触发，自托管工作流仅手动触发；两者共用发布并发锁，不运行外部 PR 的签名发版任务。完整接入步骤、密钥轮换和本地发布命令见 [`eng/GITHUB_ACTIONS.md`](eng/GITHUB_ACTIONS.md)。
 
-第一次执行 CI/CD 时请按 [`eng/CICD_GUIDE.md`](eng/CICD_GUIDE.md) 顺序配置 Windows 主机、加密变量、两条流水线，再推送版本标签。
+旧 `v0.2.0` 的四个原始附件已经上传，若转正式版失败，应使用 `finalize-release.yml` 收尾，不重新构建该版本或覆盖附件。历史 Gitee Go 指南仅供参考。
 
 本工程的自动化测试仅覆盖不接触硬件的纯软件逻辑；流水线不会启动 WPF 工作台、连接镜头或驱动电机。实际镜头、光学效果和工厂标定仍由人工在真实设备上验收。

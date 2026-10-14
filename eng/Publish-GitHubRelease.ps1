@@ -7,7 +7,9 @@ param(
     [ValidatePattern('^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+$')]
     [string]$Repository = $env:GITHUB_REPOSITORY,
     [string]$SourceDirectory,
-    [string]$ArtifactDirectory
+    [string]$ArtifactDirectory,
+    [ValidatePattern('^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+$')]
+    [string]$GiteeRepository = $(if ($env:GITEE_REPOSITORY) { $env:GITEE_REPOSITORY } else { 'warren-cao/focusir-workbench-releases' })
 )
 
 Set-StrictMode -Version Latest
@@ -17,7 +19,7 @@ $repositoryRoot = if ($SourceDirectory) { [IO.Path]::GetFullPath($SourceDirector
 if (-not $ArtifactDirectory) { $ArtifactDirectory = Join-Path $repositoryRoot 'artifacts/release' }
 $ArtifactDirectory = [IO.Path]::GetFullPath($ArtifactDirectory)
 # 用同一套验签和摘要规则复核；不依赖自托管主机预装 gh CLI。
-& (Join-Path $PSScriptRoot 'Publish-GiteeRelease.ps1') -Tag $Tag -Mode Validate -SourceDirectory $repositoryRoot -ArtifactDirectory $ArtifactDirectory
+& (Join-Path $PSScriptRoot 'Publish-GiteeRelease.ps1') -Tag $Tag -Repository $GiteeRepository -Mode Validate -SourceDirectory $repositoryRoot -ArtifactDirectory $ArtifactDirectory
 $manifest = Get-Content -LiteralPath (Join-Path $artifactDirectory 'update-manifest.json') -Raw | ConvertFrom-Json
 $headers = @{
     Authorization = "Bearer $env:GH_TOKEN"

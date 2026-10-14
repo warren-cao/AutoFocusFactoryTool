@@ -13,9 +13,25 @@ on:
         required: true
         type: string
       gitee_release_id:
-        description: 'Existing Gitee Release ID (this failure: 1204616)'
+        description: 'Existing Release ID (1204616); bridge only: 0 creates a missing bridge from original files'
         required: true
         type: string
+      gitee_repository:
+        description: 'Select the repository containing the existing release'
+        required: true
+        default: warren-cao/auto-focus-factory-tool
+        type: choice
+        options:
+          - warren-cao/auto-focus-factory-tool
+          - warren-cao/focusir-workbench-releases
+      artifact_kind:
+        description: 'Original main release or separately signed legacy bridge'
+        required: true
+        default: release
+        type: choice
+        options:
+          - release
+          - bridge
       publish:
         description: 'Finalize Gitee and publish GitHub (false = original artifact validation only)'
         required: true
@@ -46,16 +62,19 @@ jobs:
       GITEE_RELEASE_ID: ${{ inputs.gitee_release_id }}
       PUBLISH_RELEASE: ${{ inputs.publish }}
       RELEASE_TOOLING_COMMIT: ${{ github.workflow_sha }}
-      GITEE_REPOSITORY: warren-cao/auto-focus-factory-tool
+      GITEE_REPOSITORY: ${{ inputs.gitee_repository }}
+      ARTIFACT_KIND: ${{ inputs.artifact_kind }}
 
     steps:
       - name: Validate trusted recovery request
         run: |
           if ($env:GITHUB_REF -ne 'refs/heads/master' -or $env:RUNNER_NAME -ine 'DESKTOP-AI3E9IB') { throw 'Use master on the trusted runner.' }
           if ($env:RELEASE_TAG -cnotmatch '^v(0|[1-9]\d*)\.(0|[1-9]\d*)\.(0|[1-9]\d*)$') { throw 'Invalid stable tag.' }
-          foreach ($id in @($env:SOURCE_RUN_ID, $env:GITEE_RELEASE_ID)) {
-            if ($id -cnotmatch '^[1-9]\d{0,17}$') { throw 'Run and release IDs must be positive integers.' }
-          }
+          if ($env:GITEE_REPOSITORY -notin @('warren-cao/auto-focus-factory-tool', 'warren-cao/focusir-workbench-releases') -or
+              $env:ARTIFACT_KIND -notin @('release', 'bridge')) { throw 'Unknown repository or artifact kind.' }
+          if ($env:SOURCE_RUN_ID -cnotmatch '^[1-9]\d{0,17}$' -or $env:GITEE_RELEASE_ID -cnotmatch '^(0|[1-9]\d{0,17})$') { throw 'Invalid run or release ID.' }
+          if ($env:GITEE_RELEASE_ID -eq '0' -and $env:ARTIFACT_KIND -ne 'bridge') { throw 'Only an explicitly selected missing bridge may use Release ID 0.' }
+          if ($env:ARTIFACT_KIND -eq 'bridge' -and ($env:RELEASE_TAG -cne 'v0.2.1' -or $env:GITEE_REPOSITORY -cne 'warren-cao/auto-focus-factory-tool')) { throw 'The migration bridge must target the legacy repository at v0.2.1.' }
 
       - name: Checkout original source tag and complete history
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -92,7 +111,7 @@ jobs:
               throw 'Source run is not a trusted completed build.'
             }
             $artifacts = Invoke-RestMethod -Uri "$root/runs/$env:SOURCE_RUN_ID/artifacts?per_page=100" -Headers $headers -TimeoutSec 60
-            $names = @("focusir-release-$env:RELEASE_TAG-$($run.run_attempt)", "focusir-self-hosted-release-$env:RELEASE_TAG-$($run.run_attempt)")
+            $names = @("focusir-$env:ARTIFACT_KIND-$env:RELEASE_TAG-$($run.run_attempt)", "focusir-self-hosted-$env:ARTIFACT_KIND-$env:RELEASE_TAG-$($run.run_attempt)")
             $selected = @($artifacts.artifacts | Where-Object { $_.name -cin $names -and -not $_.expired })
             if ($selected.Count -ne 1) { throw 'Exactly one original, unexpired signed artifact is required.' }
             [IO.File]::AppendAllText($env:GITHUB_OUTPUT, "artifact_id=$($selected[0].id)`n", [Text.UTF8Encoding]::new($false))
@@ -110,17 +129,39 @@ jobs:
 
       - name: Verify original signature and exact remote files
         run: |
-          & "$env:FOCUSIR_TOOLING/Publish-GiteeRelease.ps1" -Tag $env:RELEASE_TAG -Mode VerifyExisting -ReleaseId $env:GITEE_RELEASE_ID -SourceDirectory $env:GITHUB_WORKSPACE -ArtifactDirectory artifacts/recovery
+          if ($env:GITEE_RELEASE_ID -eq '0') {
+            & "$env:FOCUSIR_TOOLING/Publish-GiteeRelease.ps1" -Tag $env:RELEASE_TAG -Mode Validate -SourceDirectory $env:GITHUB_WORKSPACE -ArtifactDirectory artifacts/recovery
+            & "$env:FOCUSIR_TOOLING/Publish-GiteeRelease.ps1" -Tag $env:RELEASE_TAG -Mode Diagnose -SourceDirectory $env:GITHUB_WORKSPACE
+          } else {
+            & "$env:FOCUSIR_TOOLING/Publish-GiteeRelease.ps1" -Tag $env:RELEASE_TAG -Mode VerifyExisting -ReleaseId $env:GITEE_RELEASE_ID -SourceDirectory $env:GITHUB_WORKSPACE -ArtifactDirectory artifacts/recovery
+          }
+
+      - name: Require the new feed and primary GitHub backup before recovering a bridge
+        if: env.ARTIFACT_KIND == 'bridge'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          try {
+            $newRelease = Invoke-RestMethod -Uri "https://gitee.com/api/v5/repos/warren-cao/focusir-workbench-releases/releases/tags/$env:RELEASE_TAG" -TimeoutSec 60
+            if ($newRelease.tag_name -cne $env:RELEASE_TAG -or [string]$newRelease.prerelease -ine 'false') { throw 'New feed is not ready.' }
+            $headers = @{ Authorization = "Bearer $env:GH_TOKEN"; Accept = 'application/vnd.github+json'; 'User-Agent' = 'FocusIR-Recovery' }
+            $backup = Invoke-RestMethod -Uri "https://api.github.com/repos/$env:GITHUB_REPOSITORY/releases/tags/$env:RELEASE_TAG" -Headers $headers -TimeoutSec 60
+            if ($backup.tag_name -cne $env:RELEASE_TAG -or $backup.draft -or $backup.prerelease) { throw 'Primary backup is not ready.' }
+          } catch { throw 'Complete the new Gitee feed and primary GitHub release first. Legacy clients must not migrate into an unready feed.' }
 
       - name: Verify remote bytes and finalize the same Gitee release
         if: env.PUBLISH_RELEASE == 'true'
         env:
           GITEE_TOKEN: ${{ secrets.GITEE_TOKEN }}
         run: |
-          & "$env:FOCUSIR_TOOLING/Publish-GiteeRelease.ps1" -Tag $env:RELEASE_TAG -Mode FinalizeExisting -ReleaseId $env:GITEE_RELEASE_ID -SourceDirectory $env:GITHUB_WORKSPACE -ArtifactDirectory artifacts/recovery
+          if ($env:GITEE_RELEASE_ID -eq '0') {
+            & "$env:FOCUSIR_TOOLING/Publish-GiteeRelease.ps1" -Tag $env:RELEASE_TAG -SourceDirectory $env:GITHUB_WORKSPACE -ArtifactDirectory artifacts/recovery
+          } else {
+            & "$env:FOCUSIR_TOOLING/Publish-GiteeRelease.ps1" -Tag $env:RELEASE_TAG -Mode FinalizeExisting -ReleaseId $env:GITEE_RELEASE_ID -SourceDirectory $env:GITHUB_WORKSPACE -ArtifactDirectory artifacts/recovery
+          }
 
       - name: Publish the identical original files to GitHub
-        if: env.PUBLISH_RELEASE == 'true'
+        if: env.PUBLISH_RELEASE == 'true' && env.ARTIFACT_KIND == 'release'
         env:
           GH_TOKEN: ${{ github.token }}
         run: |

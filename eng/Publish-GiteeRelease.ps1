@@ -6,7 +6,7 @@ param(
     [string]$Tag,
 
     [ValidatePattern('^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+$')]
-    [string]$Repository = $(if ($env:GITEE_REPOSITORY) { $env:GITEE_REPOSITORY } else { 'warren-cao/auto-focus-factory-tool' }),
+    [string]$Repository = $(if ($env:GITEE_REPOSITORY) { $env:GITEE_REPOSITORY } else { 'warren-cao/focusir-workbench-releases' }),
 
     [ValidateSet('Publish', 'Validate', 'CheckRemote', 'Diagnose', 'VerifyExisting', 'FinalizeExisting')]
     [string]$Mode = 'Publish',

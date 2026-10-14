@@ -4,7 +4,7 @@ param(
 
     [string]$Repository = $(
         if ([string]::IsNullOrWhiteSpace($env:GITEE_REPOSITORY)) {
-            'warren-cao/auto-focus-factory-tool'
+            'warren-cao/focusir-workbench-releases'
         }
         else {
             $env:GITEE_REPOSITORY
@@ -30,6 +30,9 @@ param(
     ),
 
     [string]$OutputDirectory,
+
+    [string]$BridgeRepository = $env:GITEE_BRIDGE_REPOSITORY,
+    [string]$BridgeOutputDirectory,
 
     # 允许可信工作流中的发布工具构建另一标签的源码，默认仍为当前仓库。
     [string]$SourceDirectory,
@@ -59,6 +62,8 @@ if ([string]::IsNullOrWhiteSpace($OutputDirectory)) {
 $OutputDirectory = [IO.Path]::GetFullPath($OutputDirectory)
 $artifactsRoot = [IO.Path]::GetFullPath((Join-Path $repositoryRoot 'artifacts'))
 $trustedPublicKeyPath = Join-Path $repositoryRoot "eng\keys\$KeyId.pem"
+if ($BridgeRepository -and -not $BridgeOutputDirectory) { $BridgeOutputDirectory = Join-Path $artifactsRoot 'bridge-release' }
+if ($BridgeOutputDirectory) { $BridgeOutputDirectory = [IO.Path]::GetFullPath($BridgeOutputDirectory) }
 $utf8WithoutBom = [Text.UTF8Encoding]::new($false)
 
 function Invoke-CheckedCommand {
@@ -389,6 +394,20 @@ try {
         @(Get-ChildItem -LiteralPath $OutputDirectory -Force).Count -gt 0) {
         throw "发布输出目录非空，拒绝覆盖：$OutputDirectory"
     }
+    if ($BridgeRepository) {
+        if ($BridgeRepository -notmatch '^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+$' -or $BridgeRepository -ieq $Repository) {
+            throw '桥接仓地址必须是不同于主发布仓的 owner/repository。'
+        }
+        if (-not $BridgeOutputDirectory.StartsWith($artifactsRoot + [IO.Path]::DirectorySeparatorChar, [StringComparison]::OrdinalIgnoreCase) -or
+            $BridgeOutputDirectory -ieq $OutputDirectory -or
+            $BridgeOutputDirectory.StartsWith($OutputDirectory + [IO.Path]::DirectorySeparatorChar, [StringComparison]::OrdinalIgnoreCase) -or
+            $OutputDirectory.StartsWith($BridgeOutputDirectory + [IO.Path]::DirectorySeparatorChar, [StringComparison]::OrdinalIgnoreCase)) {
+            throw '桥接输出目录必须是 artifacts 下独立且不互相嵌套的目录。'
+        }
+        if ((Test-Path -LiteralPath $BridgeOutputDirectory) -and @(Get-ChildItem -LiteralPath $BridgeOutputDirectory -Force).Count -gt 0) {
+            throw '桥接输出目录非空，拒绝覆盖。'
+        }
+    }
 
     if (-not $SkipCleanCheck) {
         $changes = @(git status --porcelain=v1 --untracked-files=all)
@@ -427,6 +446,14 @@ try {
     if ($configuredVersion -ne $versionText) {
         throw "标签版本 $versionText 与 Directory.Build.props 的 VersionPrefix '$configuredVersion' 不一致。"
     }
+    # 避免把仍查询旧仓的旧源码标签发布到新仓，形成迁移死循环。
+    $optionsSource = Get-Content -LiteralPath (Join-Path $repositoryRoot 'tools/FocusIR.Workbench/src/FocusIR.Workbench.Infrastructure/GiteeUpdateOptions.cs') -Raw
+    $ownerMatch = [regex]::Match($optionsSource, 'public string Owner \{ get; init; \} = "([A-Za-z0-9_.-]+)";')
+    $repoMatch = [regex]::Match($optionsSource, 'public string Repository \{ get; init; \} = "([A-Za-z0-9_.-]+)";')
+    if (-not $ownerMatch.Success -or -not $repoMatch.Success -or
+        "$($ownerMatch.Groups[1].Value)/$($repoMatch.Groups[1].Value)" -cne $Repository) {
+        throw '源码中的默认升级查询仓与主发布仓不一致；不要用旧标签重建新仓基线。'
+    }
 
     $changelog = Get-Content -LiteralPath $changelogPath -Raw -Encoding UTF8
     $releaseNotes = Get-ReleaseNotes -Changelog $changelog -Version $versionText
@@ -441,6 +468,14 @@ try {
             $existingVersion = ConvertTo-SemanticVersion ([string]$release.tag_name)
             if ($null -ne $existingVersion -and $versionValue -le $existingVersion) {
                 throw "待发布版本 $versionText 不高于已有稳定版 $existingVersion。"
+            }
+        }
+        if ($BridgeRepository) {
+            foreach ($release in @(Get-GiteeStableReleases -RepositoryPath $BridgeRepository)) {
+                $existingVersion = ConvertTo-SemanticVersion ([string]$release.tag_name)
+                if ([string]$release.tag_name -eq $Tag -or ($null -ne $existingVersion -and $versionValue -le $existingVersion)) {
+                    throw '桥接版本必须高于旧升级源的全部稳定版，且同名版本不能已发布。'
+                }
             }
         }
     }
@@ -626,6 +661,32 @@ try {
     $expectedNames = @($packageFileName, 'update-manifest.json', 'update-manifest.sig', 'SHA256SUMS.txt')
     if ($releaseFiles.Count -ne 4 -or @($releaseFiles.Name | Where-Object { $_ -notin $expectedNames }).Count -ne 0) {
         throw '发布目录必须且只能包含约定的四个 Release 附件。'
+    }
+
+    if ($BridgeRepository) {
+        $null = [IO.Directory]::CreateDirectory($BridgeOutputDirectory)
+        # 原样复制同一个 ZIP；只改外部清单地址并重新签名，不重编译/重新压缩。
+        Copy-Item -LiteralPath $packagePath -Destination (Join-Path $BridgeOutputDirectory $packageFileName)
+        $bridgeManifest = $manifestJson | ConvertFrom-Json
+        $bridgeManifest.package.url = "https://gitee.com/$BridgeRepository/releases/download/$Tag/$packageFileName"
+        $bridgeManifestPath = Join-Path $BridgeOutputDirectory 'update-manifest.json'
+        [IO.File]::WriteAllText($bridgeManifestPath, ($bridgeManifest | ConvertTo-Json -Depth 5), $utf8WithoutBom)
+        $bridgeBytes = [IO.File]::ReadAllBytes($bridgeManifestPath)
+        $bridgeKey = Import-ReleasePrivateKey -PrivateKeyText $env:UPDATE_SIGNING_KEY_PKCS8
+        try {
+            $bridgeSignature = $bridgeKey.SignData($bridgeBytes, [Security.Cryptography.HashAlgorithmName]::SHA256,
+                [Security.Cryptography.DSASignatureFormat]::IeeeP1363FixedFieldConcatenation)
+        }
+        finally { $bridgeKey.Dispose() }
+        $bridgeSignaturePath = Join-Path $BridgeOutputDirectory 'update-manifest.sig'
+        [IO.File]::WriteAllText($bridgeSignaturePath, [Convert]::ToBase64String($bridgeSignature), $utf8WithoutBom)
+        $bridgeManifestHash = (Get-FileHash -LiteralPath $bridgeManifestPath -Algorithm SHA256).Hash.ToLowerInvariant()
+        $bridgeSignatureHash = (Get-FileHash -LiteralPath $bridgeSignaturePath -Algorithm SHA256).Hash.ToLowerInvariant()
+        $bridgeChecksums = @("$packageHash  $packageFileName", "$bridgeManifestHash  update-manifest.json", "$bridgeSignatureHash  update-manifest.sig") -join "`n"
+        [IO.File]::WriteAllText((Join-Path $BridgeOutputDirectory 'SHA256SUMS.txt'), "$bridgeChecksums`n", $utf8WithoutBom)
+        & (Join-Path $PSScriptRoot 'Publish-GiteeRelease.ps1') -Tag $Tag -Repository $BridgeRepository -Mode Validate -SourceDirectory $repositoryRoot -ArtifactDirectory $BridgeOutputDirectory
+        if (-not $?) { throw '桥接制品验签或哈希检查失败。' }
+        Write-Host "桥接制品校验通过（ZIP 与主发布包相同）：$BridgeOutputDirectory"
     }
 
     Write-Host "发布包已生成并通过静态校验：$OutputDirectory"

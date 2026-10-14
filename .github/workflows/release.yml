@@ -37,8 +37,11 @@ jobs:
       RELEASE_TAG: ${{ inputs.tag || github.ref_name }}
       RELEASE_TOOLING_COMMIT: ${{ github.workflow_sha }}
       PUBLISH_RELEASE: ${{ github.event_name == 'push' || inputs.publish }}
-      GITEE_REPOSITORY: warren-cao/auto-focus-factory-tool
+      GITEE_REPOSITORY: warren-cao/focusir-workbench-releases
       GITEE_RELEASE_TARGET: ${{ vars.GITEE_RELEASE_TARGET }}
+      # One bridge release migrates installed v0.2.0 clients; later tags publish only to the new repo.
+      GITEE_BRIDGE_REPOSITORY: ${{ (inputs.tag || github.ref_name) == 'v0.2.1' && 'warren-cao/auto-focus-factory-tool' || '' }}
+      GITEE_BRIDGE_TARGET: ${{ vars.GITEE_BRIDGE_TARGET }}
       UPDATE_SIGNING_KEY_ID: focusir-release-2026
       MINIMUM_UPDATER_VERSION: '0.2.0'
       DOTNET_NOLOGO: 'true'
@@ -95,6 +98,9 @@ jobs:
           GITEE_TOKEN: ${{ secrets.GITEE_TOKEN }}
         run: |
           & "$env:FOCUSIR_TOOLING/Publish-GiteeRelease.ps1" -Tag $env:RELEASE_TAG -Mode CheckRemote -SourceDirectory $env:GITHUB_WORKSPACE
+          if ($env:GITEE_BRIDGE_REPOSITORY) {
+            & "$env:FOCUSIR_TOOLING/Publish-GiteeRelease.ps1" -Tag $env:RELEASE_TAG -Mode CheckRemote -Repository $env:GITEE_BRIDGE_REPOSITORY -GiteeTargetRef $env:GITEE_BRIDGE_TARGET -SourceDirectory $env:GITHUB_WORKSPACE
+          }
 
       - name: Build, test, publish and sign package
         env:
@@ -112,6 +118,16 @@ jobs:
           compression-level: 0
           retention-days: 30
 
+      - name: Preserve the independently signed legacy bridge files
+        if: env.GITEE_BRIDGE_REPOSITORY != ''
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: focusir-bridge-${{ env.RELEASE_TAG }}-${{ github.run_attempt }}
+          path: artifacts/bridge-release/*
+          if-no-files-found: error
+          compression-level: 0
+          retention-days: 30
+
       - name: Publish complete stable release to Gitee
         if: env.PUBLISH_RELEASE == 'true'
         env:
@@ -125,6 +141,13 @@ jobs:
           GH_TOKEN: ${{ github.token }}
         run: |
           & "$env:FOCUSIR_TOOLING/Publish-GitHubRelease.ps1" -Tag $env:RELEASE_TAG -SourceDirectory $env:GITHUB_WORKSPACE
+
+      - name: Publish legacy bridge last after the new feed and GitHub backup are ready
+        if: env.PUBLISH_RELEASE == 'true' && env.GITEE_BRIDGE_REPOSITORY != ''
+        env:
+          GITEE_TOKEN: ${{ secrets.GITEE_TOKEN }}
+        run: |
+          & "$env:FOCUSIR_TOOLING/Publish-GiteeRelease.ps1" -Tag $env:RELEASE_TAG -Repository $env:GITEE_BRIDGE_REPOSITORY -GiteeTargetRef $env:GITEE_BRIDGE_TARGET -SourceDirectory $env:GITHUB_WORKSPACE -ArtifactDirectory artifacts/bridge-release
 
       - name: Preserve test, build and upload diagnostics
         if: always()

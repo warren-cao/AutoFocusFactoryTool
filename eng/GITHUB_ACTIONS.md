@@ -8,7 +8,8 @@
 - 云端工作流：`.github/workflows/release.yml`
 - 自托管工作流：`.github/workflows/release-self-hosted.yml`（仅手动触发）
 - 原制品收尾工作流：`.github/workflows/finalize-release.yml`（仅手动触发，不编译）
-- 上位机升级源：<https://gitee.com/warren-cao/auto-focus-factory-tool/releases>
+- 新的公开升级源：<https://gitee.com/warren-cao/focusir-workbench-releases/releases>
+- 旧客户端桥接源：<https://gitee.com/warren-cao/auto-focus-factory-tool/releases>（迁移完成前保留）
 
 ## 1. 一次性配置 Secrets
 
@@ -17,7 +18,7 @@
 | Secret | 内容 |
 | --- | --- |
 | `UPDATE_SIGNING_KEY_PKCS8` | 现有 `artifacts/signing/update-signing-key.pkcs8.b64` 的完整文本，须与 `eng/keys/focusir-release-2026.pem` 配对 |
-| `GITEE_TOKEN` | Gitee 私人令牌，令牌账号须具有公开发布仓的元数据读取、Release 创建/修改和附件上传权限；不需要访问 GitHub 源码 |
+| `GITEE_TOKEN` | Gitee 私人令牌，须有新公开发布仓及旧桥接仓的 Release 创建/修改和附件上传权限；不需要访问 GitHub 源码 |
 
 Gitee 令牌在 <https://gitee.com/profile/personal_access_tokens> 创建。不要用 GitHub Token 代替。私钥不需要重新生成，也不要提交到仓库；只在平台的机密字段粘贴其值。
 
@@ -27,23 +28,23 @@ Gitee 令牌在 <https://gitee.com/profile/personal_access_tokens> 创建。不�
 
 GitHub 保存完整源码、master 和版本标签。Gitee 发布仓必须公开，并已有至少一个 README 初始化提交；可以没有任何应用源码。脚本自动读取 Gitee 默认分支作为发布锚点，也可通过仓库 Actions Variable `GITEE_RELEASE_TARGET` 指定该发布仓里的分支/提交。不能把 GitHub 源码 SHA 填入这个变量。
 
-版本文件和更新日志必须匹配待发布版本，然后只向 GitHub 推送。例如（`v0.2.0` 标签已存在时不要重复创建，也不要移动）：
+版本文件和更新日志必须匹配待发布版本，然后只向 GitHub 推送。例如准备桥接版本 `v0.2.1`（旧 `v0.2.0` 标签不得移动）：
 
 ```powershell
 Set-Location F:\Project\auto-focus-factory-tool
 git status --short
 git push github master
-git tag -a v0.2.0 -m "FocusIR Workbench v0.2.0"
-git push github v0.2.0
+git tag -a v0.2.1 -m "FocusIR Workbench v0.2.1 migration bridge"
+git push github v0.2.1
 ```
 
-最后一条命令触发云端 GitHub Actions。**不要再运行 `git push origin master` 或 `git push origin --tags`：当前本地 `origin` 仍指向 Gitee。**本文没有自动修改你的 Git remote；使用显式的 `github` 远端，或由维护者确认后把 GitHub 调整为默认远端。不要预先创建同名 Gitee Release。
+最后一条命令触发云端 GitHub Actions。本机已将默认 `origin` 切为 GitHub，并保留 `github` 兼容别名；旧 Gitee 远端改名为 `gitee-legacy`，只用于读取历史，其本机 push URL 已禁用。其他已有克隆请先检查 `git remote -v`，确认目标为 GitHub 后再推送，不要把应用源码上传到新/旧 Gitee。不要预先创建同名 Gitee Release。
 
 本机此前已确认 GitHub 连接需要 HTTP/1.1 时，可把相关 push 改为：
 
 ```powershell
 git -c http.version=HTTP/1.1 -c http.sslBackend=schannel push github master
-git -c http.version=HTTP/1.1 -c http.sslBackend=schannel push github v0.2.0
+git -c http.version=HTTP/1.1 -c http.sslBackend=schannel push github v0.2.1
 ```
 
 后续版本先更新 `Directory.Build.props`、`CHANGELOG.md`，执行 `dotnet restore .\FocusIR.Workbench.sln --force-evaluate` 并检查提交相应锁文件，然后仅在 GitHub 提交、推送和打标签。已发布的 GitHub 源码标签不能重新指向另一提交。
@@ -53,7 +54,7 @@ git -c http.version=HTTP/1.1 -c http.sslBackend=schannel push github v0.2.0
 进入 Actions → FocusIR Release → Run workflow：
 
 1. 工作流分支选择 `master`。
-2. `tag` 填写已推送到 GitHub 的完整版本标签，例如 `v0.2.0`，不能填写 master、提交 SHA 或预发布标签。
+2. `tag` 填写已推送到 GitHub 的完整版本标签，例如 `v0.2.1`，不能填写 master、提交 SHA 或预发布标签。
 3. `publish=true`：完整发布到 Gitee 和 GitHub。
 4. `publish=false`：执行测试、构建、签名和成品检查，上传 Actions Artifacts，不创建任何远端 Release；仍需要签名 Secret。
 
@@ -121,7 +122,7 @@ Gitee 发布上传脚本还提供 `-Mode Validate`，可对已有 `artifacts/rel
 
 1. 把新工作流和工具提交推送到 GitHub `master`，不移动 `v0.2.0` 标签。
 2. Actions → **FocusIR Release (Self-hosted)** → **Run workflow**。
-3. 分支选择 `master`，tag 填 `v0.2.0`，保持 **publish=false**。
+3. 分支选择 `master`，tag 填新源码对应的 `v0.2.1`，保持 **publish=false**。`v0.2.0` 的原包收尾使用第 9 节专用工作流，不重建。
 4. 查看 PowerShell 前置检查和实际 runner 名称，再查看 Gitee 只读诊断、编译、既有软件测试和签名打包结果。
 5. 下载 `focusir-self-hosted-release-...` 和 `focusir-self-hosted-diagnostics-...` 制品。此模式不会创建、上传、修改或删除远端 Release；Gitee 已有不完整预发布时仍可以进行只读诊断。它验证基本 API 连通性，不验证大 ZIP 上传。
 
@@ -150,7 +151,7 @@ Gitee 发布上传脚本还提供 `-Mode Validate`，可对已有 `artifacts/rel
 公开仓只读诊断可以匿名执行；其他联网模式需要通过安全机制设置 `GITEE_TOKEN`，不要把其值写进命令历史：
 
 ```powershell
-./eng/Publish-GiteeRelease.ps1 -Tag v0.2.0 -TargetCommit (git rev-parse 'v0.2.0^{}') -Mode Diagnose
+./eng/Publish-GiteeRelease.ps1 -Tag v0.2.0 -Repository warren-cao/auto-focus-factory-tool -TargetCommit (git rev-parse 'v0.2.0^{}') -Mode Diagnose
 ```
 
 ## 9. 保留原制品完成这次 v0.2.0 发布
@@ -160,7 +161,7 @@ Gitee 发布上传脚本还提供 `-Mode Validate`，可对已有 `artifacts/rel
 **推荐直接使用 Actions，无需在本机输入令牌：**
 
 1. 把修复推送到 GitHub master 后，Actions → **FocusIR Finalize Existing Release** → Run workflow。
-2. 分支选 `master`，`tag=v0.2.0`，`source_run_id=38519225911`，`gitee_release_id=1204616`。
+2. 分支选 `master`，`tag=v0.2.0`，`source_run_id=38519225911`，`gitee_release_id=1204616`；`gitee_repository` 选旧仓 `warren-cao/auto-focus-factory-tool`，`artifact_kind=release`。
 3. 可先保留 `publish=false`，验证原运行来源、制品完整性、签名，并匿名下载 Gitee 四个附件比对哈希，不修改任何远端发布。
 4. 确认后同样输入选择 `publish=true`：使用原运行中的不可变制品，完整校验远端附件后只补做 Gitee 转正式版，再上传同样四个文件到 GitHub。使用现有 Secrets 和临时 GitHub Token，无需新增 PAT、SDK 或签名私钥。
 5. 不要从原失败记录点击 Re-run；旧记录仍使用旧工具。新工作流也不自动删除或覆盖 GitHub 已有草稿。
@@ -174,9 +175,9 @@ Gitee 发布上传脚本还提供 `-Mode Validate`，可对已有 `artifacts/rel
 
 ```powershell
 $originalFiles = 'F:\Project\auto-focus-factory-tool\artifacts\recovery-38519225911'
-./eng/Publish-GiteeRelease.ps1 -Tag v0.2.0 -SourceCommit (git rev-parse 'v0.2.0^{}') -Mode FinalizeExisting -ReleaseId 1204616 -ArtifactDirectory $originalFiles
+./eng/Publish-GiteeRelease.ps1 -Tag v0.2.0 -Repository warren-cao/auto-focus-factory-tool -SourceCommit (git rev-parse 'v0.2.0^{}') -Mode FinalizeExisting -ReleaseId 1204616 -ArtifactDirectory $originalFiles
 # 仅在上一条成功后继续；不再调用构建脚本或普通 Publish 模式。
-./eng/Publish-GitHubRelease.ps1 -Tag v0.2.0 -Repository warren-cao/AutoFocusFactoryTool -ArtifactDirectory $originalFiles
+./eng/Publish-GitHubRelease.ps1 -Tag v0.2.0 -Repository warren-cao/AutoFocusFactoryTool -GiteeRepository warren-cao/auto-focus-factory-tool -ArtifactDirectory $originalFiles
 ```
 
 收尾先校验原始四个文件的签名和哈希，再核对指定 Release ID、标签、四个远端附件的名字/长度，并匿名下载所有远端附件流式比对 SHA-256。只有完全一致才补齐必填元数据、将同一 Release 转正式版；不创建 Release，不重新上传或替换附件。若它已是正式版，则仅复核、不修改。网络异常、内容不符或 ID 不符均停止；未增加自动重试。
@@ -193,7 +194,22 @@ $originalFiles = 'F:\Project\auto-focus-factory-tool\artifacts\recovery-38519225
 1. **保留现有仓库地址：**先备份 Release 四个原始制品和元数据，再按平台能力单独规划清理所有源码引用/历史，仅保留 README 锚点；旧版本标签、源码压缩包和平台保留数据也需检查。不能直接清空整个仓库，避免连同升级 Release 一起删除。
 2. **新建公开发布仓：**只初始化 README，再迁移验证过的签名制品；需要更新客户端的 Gitee 查询配置、下载地址和签名清单，并通过原升级源发布迁移桥接版本。**仅修改流水线变量不能迁移已安装客户端。**不要把旧签名清单里的下载地址直接改写，改写会使签名失效。
 
-当前保持 `warren-cao/auto-focus-factory-tool` 升级地址不变，未执行上述破坏性迁移，也没有替你修改 GitHub 仓库可见性。发布前应确认公开包不含源码、私钥或敏感配置；.NET 编译产物本身仍可能被反编译，源码仓私有化并不是二进制防逆向机制。
+已选择第 2 种方式，新仓名称确定为 `warren-cao/focusir-workbench-releases`。没有删除旧仓或源码历史，也没有替你修改 GitHub 仓库可见性。发布前应确认公开包不含源码、私钥或敏感配置；.NET 编译产物本身仍可能被反编译，源码仓私有化并不是二进制防逆向机制。
+
+## 11. v0.2.1 桥接迁移的执行顺序
+
+1. 在 Gitee 网页创建公开仓 `warren-cao/focusir-workbench-releases`，只初始化 README，完成平台要求的公开审核，并确认匿名 API 可访问。不要将源码推过去。本机 Git 登录不是 Gitee API Token，无法代替建仓授权。
+2. 确认现有 `GITEE_TOKEN` 对新、旧两个仓库均有发布权限；`GITEE_RELEASE_TARGET` 留空即可使用新仓默认分支，旧仓可用独立变量 `GITEE_BRIDGE_TARGET`，默认也取其默认分支。
+3. 本次代码已准备 `VersionPrefix=0.2.1` 和变更记录，并把程序默认查询源及“关于”地址改为新仓；**还没有创建或推送 `v0.2.1` 标签**。
+4. 源码审查及人工验收后，仅在 GitHub 创建 `v0.2.1` 标签。当前两条构建工作流只在此标签上启用 `GITEE_BRIDGE_REPOSITORY=warren-cao/auto-focus-factory-tool`；后续版本只发布新仓。
+5. 构建脚本校验“源码默认升级地址 = 主发布仓”，生成主发布四个文件以及 `artifacts/bridge-release/` 四个桥接文件。ZIP 逐字节相同；桥接清单的包地址仍指向旧仓，必须使用同一受信密钥重新签名，不能直接编辑原清单。
+6. 两套签名制品都先归档。正式发布顺序固定为 **新 Gitee 正式版 → GitHub 同一主制品备份 → 旧 Gitee 桥接正式版**。旧客户端只有在新源已准备好后才会看到桥接更新。
+7. 旧 `v0.2.0` 客户端从旧仓获得 `v0.2.1`，下载旧仓中的桥接清单及同一 ZIP，正常验签、安装和健康检查；升级后的程序改为查询新仓。新安装的 `v0.2.1` 也直接查询新仓。
+8. 下一版本（如 `v0.2.2`）只发新仓。逐工位确认“关于”地址和升级查询正常后，再单独决定旧仓的可见性或退役。**不要在迁移完成前删除、私有化旧仓或删除桥接包。**
+
+如桥接阶段失败，使用收尾工作流选择原构建 run、旧仓及 `artifact_kind=bridge`，它会使用 `focusir[-self-hosted]-bridge-...` 制品，只收尾旧仓、不向已有 GitHub 同版本主 Release 再上传另一份清单。主发布收尾则选择新仓及 `artifact_kind=release`。
+
+如果主发布/GitHub 备份失败导致旧桥接步骤根本没有执行，先收尾主发布，再用同一原构建 run、旧仓、`artifact_kind=bridge` 和 `gitee_release_id=0` 补发缺失的桥接 Release。只有桥接模式允许 ID=0；它仍拒绝覆盖同名 Release，并提前检查新源和 GitHub 主备份都已正式发布。旧桥接已有 Release 时必须填其真实 ID，不能用 0。
 
 ## 官方参考
 

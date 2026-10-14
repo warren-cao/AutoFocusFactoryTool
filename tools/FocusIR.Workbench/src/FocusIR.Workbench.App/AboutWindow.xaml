@@ -13,11 +13,11 @@
                 <TextBlock x:Name="VersionText" FontSize="16" Margin="0,4,0,14" />
                 <TextBlock Text="运行环境" Foreground="#647582" />
                 <TextBlock Text=".NET 10 · Windows x64 · Socket v1 协议" Margin="0,4,0,14" />
-                <TextBlock Text="Gitee 项目地址" Foreground="#647582" />
+                <TextBlock Text="Gitee 版本发布地址" Foreground="#647582" />
                 <TextBlock Margin="0,4,0,0" TextWrapping="Wrap">
-                    <Hyperlink NavigateUri="https://gitee.com/warren-cao/auto-focus-factory-tool"
+                    <Hyperlink NavigateUri="https://gitee.com/warren-cao/focusir-workbench-releases"
                                RequestNavigate="RepositoryLink_RequestNavigate">
-                        https://gitee.com/warren-cao/auto-focus-factory-tool
+                        https://gitee.com/warren-cao/focusir-workbench-releases
                     </Hyperlink>
                 </TextBlock>
             </StackPanel>

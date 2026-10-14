@@ -7,7 +7,7 @@ public sealed class GiteeUpdateOptions
     private static readonly Regex RepositoryPartPattern = new("^[A-Za-z0-9_.-]+$", RegexOptions.CultureInvariant);
 
     public string Owner { get; init; } = "warren-cao";
-    public string Repository { get; init; } = "auto-focus-factory-tool";
+    public string Repository { get; init; } = "focusir-workbench-releases";
     public long MaxPackageBytes { get; init; } = 512L * 1024 * 1024;
     public int MaxManifestBytes { get; init; } = 1024 * 1024;
     public int MaxSignatureBytes { get; init; } = 4096;
