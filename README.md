@@ -52,22 +52,24 @@ dotnet build .\FocusIR.Workbench.sln -c Release --no-restore
 
 源码仅保存在 GitHub（可以私有），新的公开二进制发布仓为 `warren-cao/focusir-workbench-releases`。支持 GitHub 云端 Windows 和自托管 `DESKTOP-AI3E9IB`，无需 Gitee 企业版；不再向 Gitee 推送源码。工作流和配置见 [GitHub Actions 发布指南](eng/GITHUB_ACTIONS.md)。
 
-当前准备的 `v0.2.1` 为迁移桥接版：新仓先发布，再备份到 GitHub，最后在旧 `auto-focus-factory-tool` 仓发布同一 ZIP 的独立签名清单。旧客户端升级后查询新仓；下一版只发布新仓。新仓须先在 Gitee 网页创建并公开，仅初始化 README。源码仓私有化前须保留旧升级源，直到工位全部迁移完成。
+`v0.2.1` 为迁移桥接版：新仓先发布，再备份到 GitHub，最后在旧 `auto-focus-factory-tool` 仓发布同一 ZIP 的独立签名清单。旧客户端升级后查询新仓；下一版只发布新仓。新仓只保留发布说明 README，不存放应用源码。旧升级源须保留到工位全部迁移完成。
 
 应用版本统一配置在 `Directory.Build.props` 的 `VersionPrefix`。稳定版本使用 `v主版本.次版本.修订版本` 标签，并通过公开 Gitee Release 发布 `win-x64` 自包含 ZIP、升级清单、ECDSA 签名和 SHA-256 校验文件。
 
 应用只在用户确认且设备已断开、没有活动任务或控制租约、没有未完成编辑/保存时启动安装。安装由独立更新器完成，使用 `%LocalAppData%\ThermEye\FocusIRWorkbench` 下的版本目录切换并保留上一版本；新版本未在规定时间内报告健康状态时自动回滚。升级过程不会主动停止电机或连接设备。
 
-现有 `v0.1.0` 不具备自升级能力，必须人工部署一次 `v0.2.0` 基线：下载 Release 的 ZIP 与 `SHA256SUMS.txt`，校验摘要后保留原 ZIP，将 ZIP 解压到临时目录，再从该目录执行：
+现有 `v0.1.0` 不具备自升级能力，必须人工部署一次带更新器的基线；首次安装推荐直接使用新发布仓的 `v0.2.1`。下载该版 ZIP 与 `SHA256SUMS.txt`，校验摘要后保留原 ZIP，将 ZIP 解压到临时目录，再从该目录执行：
 
 ```powershell
-.\launcher\FocusIR.Workbench.Updater.exe --install-package <ZIP绝对路径> --version 0.2.0 --sha256 <SHA256SUMS中的包摘要>
+.\launcher\FocusIR.Workbench.Updater.exe --install-package <ZIP绝对路径> --version 0.2.1 --sha256 <SHA256SUMS中的包摘要>
 ```
 
 基线安装成功后，开始菜单入口固定指向用户目录中的启动器，后续版本由应用内“检查更新”完成。签名或哈希校验失败时不得绕过检查继续安装。
 
+已安装 `v0.2.0` 基线的工位不需要重装，使用旧升级源上的 `v0.2.1` 桥接更新即可切换到新仓；未经过安装器部署的开发目录运行版本，应先完成上述基线安装。
+
 GitHub 云端正式发布由 `vX.Y.Z` 标签触发，自托管工作流仅手动触发；两者共用发布并发锁，不运行外部 PR 的签名发版任务。完整接入步骤、密钥轮换和本地发布命令见 [`eng/GITHUB_ACTIONS.md`](eng/GITHUB_ACTIONS.md)。
 
-旧 `v0.2.0` 的四个原始附件已经上传，若转正式版失败，应使用 `finalize-release.yml` 收尾，不重新构建该版本或覆盖附件。历史 Gitee Go 指南仅供参考。
+旧 `v0.2.0` 的原始附件作为预发布历史保留，本次迁移无需再把它转正式版，以免旧源 latest 被较低版本遮蔽。`v0.2.1` 已在新仓、GitHub 备份及旧桥接仓正式发布；后续故障使用 `finalize-release.yml` 和原始签名制品恢复，不重新构建或覆盖已发布版本。历史 Gitee Go 指南仅供参考。
 
 本工程的自动化测试仅覆盖不接触硬件的纯软件逻辑；流水线不会启动 WPF 工作台、连接镜头或驱动电机。实际镜头、光学效果和工厂标定仍由人工在真实设备上验收。

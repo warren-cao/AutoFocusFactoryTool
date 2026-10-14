@@ -154,7 +154,9 @@ Gitee 发布上传脚本还提供 `-Mode Validate`，可对已有 `artifacts/rel
 ./eng/Publish-GiteeRelease.ps1 -Tag v0.2.0 -Repository warren-cao/auto-focus-factory-tool -TargetCommit (git rev-parse 'v0.2.0^{}') -Mode Diagnose
 ```
 
-## 9. 保留原制品完成这次 v0.2.0 发布
+## 9. 历史 v0.2.0 故障恢复示例（当前不执行）
+
+**迁移已使用更高版本 `v0.2.1` 完成。不要再把历史 `v0.2.0` 预发布转正式版，以免 Gitee latest 重新指向较低版本。**以下仅保留原故障的诊断和恢复操作作为参考；本次结果见第 12 节。
 
 本次失败发生在运行 `38519225911`：四个附件已上传到 Gitee Release `1204616`，但转正式版返回 400，GitHub 步骤为 `skipped`。不要重跑完整构建、删除附件或创建第二个同名 Release。
 
@@ -208,7 +210,7 @@ $originalFiles = 'F:\Project\auto-focus-factory-tool\artifacts\recovery-38519225
 
 1. 在 Gitee 网页创建公开仓 `warren-cao/focusir-workbench-releases`，只初始化 README，完成平台要求的公开审核，并确认匿名 API 可访问。不要将源码推过去。本机 Git 登录不是 Gitee API Token，无法代替建仓授权。
 2. 确认现有 `GITEE_TOKEN` 对新、旧两个仓库均有发布权限；`GITEE_RELEASE_TARGET` 留空即可使用新仓默认分支，旧仓可用独立变量 `GITEE_BRIDGE_TARGET`，默认也取其默认分支。
-3. 本次代码已准备 `VersionPrefix=0.2.1` 和变更记录，并把程序默认查询源及“关于”地址改为新仓；**还没有创建或推送 `v0.2.1` 标签**。
+3. 桥接源码版本为 `0.2.1`，程序默认查询源及“关于”地址已改为新仓；**`v0.2.1` 源码标签已经创建，禁止重复创建或移动该标签**。首次安装可直接安装新仓 `v0.2.1`，已安装旧基线的工位使用桥接更新。
 4. 源码审查及人工验收后，仅在 GitHub 创建 `v0.2.1` 标签。当前两条构建工作流只在此标签上启用 `GITEE_BRIDGE_REPOSITORY=warren-cao/auto-focus-factory-tool`；后续版本只发布新仓。
 5. 构建脚本校验“源码默认升级地址 = 主发布仓”，生成主发布四个文件以及 `artifacts/bridge-release/` 四个桥接文件。ZIP 逐字节相同；桥接清单的包地址仍指向旧仓，必须使用同一受信密钥重新签名，不能直接编辑原清单。
 6. 两套签名制品都先归档。正式发布顺序固定为 **新 Gitee 正式版 → GitHub 同一主制品备份 → 旧 Gitee 桥接正式版**。旧客户端只有在新源已准备好后才会看到桥接更新。
@@ -222,6 +224,27 @@ $originalFiles = 'F:\Project\auto-focus-factory-tool\artifacts\recovery-38519225
 一次性在自托管主机执行完整迁移时，可运行 **FocusIR Release (Self-hosted)**，选择 master、`tag=v0.2.1`、`publish=true`、`create_bridge_tag=true`。该选项仅允许此迁移版本，先核对 master 的版本值，再使用工作流自己的临时 `GITHUB_TOKEN` 创建标签，因此不会额外触发云端 tag-push 发布流程；已有标签若指向不同提交则拒绝，不移动或删除它。普通后续发版保持 `create_bridge_tag=false` 并使用已存在的源码标签。
 
 新发布仓的初始化文件模板保存在 `eng/release-repository/README.md`。只能在独立空 Git 仓中提交该模板，不能把源码仓的 Git 历史推到发布仓。
+
+## 12. 2026-10-14 发布端迁移记录
+
+- 源码标签 `v0.2.1` 固定在 GitHub 提交 `2faa281a43e3a3a16aa86018228fe1820c303fa8`；后续仅修复传输/恢复工具，没有移动标签、重新构建程序或重新签名制品。
+- 新公开仓初始化提交 `3a9c448db8b628282d4cc7bea4496dac02887599`，Git 树只有 README，不含上位机源码或签名私钥。
+- 新仓正式版：<https://gitee.com/warren-cao/focusir-workbench-releases/releases/tag/v0.2.1>（Release `1204830`）。
+- GitHub 正式备份：<https://github.com/warren-cao/AutoFocusFactoryTool/releases/tag/v0.2.1>（Release `412440492`）。
+- 旧仓正式桥接：<https://gitee.com/warren-cao/auto-focus-factory-tool/releases/tag/v0.2.1>（Release `1205042`）。
+- 原构建运行 `38525956998` 的 47 项纯软件测试全部通过。其原 PowerShell GitHub ZIP 上传超时，留下失败占位；仅清理确切 starter 占位后，以相同原始文件通过流式上传恢复，未覆盖任何有效附件。
+- 桥接恢复运行 <https://github.com/warren-cao/AutoFocusFactoryTool/actions/runs/38535918158> 成功；使用原运行已验证的签名文件，没有重新构建或访问镜头设备。
+- 新、旧 Gitee 的匿名 latest 均已确认返回正式 `v0.2.1`；两个仓的实际下载内容已逐文件与原制品比对，GitHub 四个附件的服务端摘要也已核对。
+
+三处程序 ZIP 均为 `94,443,185` 字节，SHA-256：
+
+```text
+3641a5749e401c67e421f306500beecaac2b53288da443a53d17e463ce79d96a
+```
+
+发布端就绪不代表所有工位已经迁移。已安装 `v0.2.0` 的工位需在设备断开、无任务/租约和未完成编辑保存时，通过“帮助 → 检查更新”安装 `v0.2.1`，然后核对“关于”显示的新仓地址。首次安装可直接安装新仓 `v0.2.1`。实际镜头、标定与光学效果仍由人工验收。
+
+旧仓的历史源码及 `v0.2.0` 预发布未删除，旧仓也未私有化；GitHub 仓库可见性未改动。待全工位迁移后，再由维护者单独处理旧仓，不能提前关闭旧升级源。
 
 ## 官方参考
 
