@@ -22,6 +22,9 @@ public sealed partial class MainViewModel : INotifyPropertyChanged, IAsyncDispos
     private bool _isBusy;
     private int _disposed;
     private ConnectionState _state = ConnectionState.Disconnected;
+    private string? _connectedHost;
+    private bool _previewConnectionEnabled;
+    private CancellationTokenSource? _connectCancellation;
     private DeviceSummary? _device;
     private JsonElement? _snapshot;
     private long? _snapshotReceivedTick;
@@ -101,6 +104,7 @@ public sealed partial class MainViewModel : INotifyPropertyChanged, IAsyncDispos
     public Visibility FactorySweepGearVisibility => (FactorySingleSweep || FactoryUseHybrid) && _device?.FactorySweepGearSupported==true ? Visibility.Visible : Visibility.Collapsed;
     private bool _factoryUseHybrid = true;
     public CalibrationChartsViewModel Charts { get; } = new();
+    public DevicePreviewViewModel Preview { get; } = new();
     private string _factoryBudgetMilliseconds = "900000";
     private string _factoryClearScoreRatio = "0.95";
     private string _factoryAmbientTemperatureC = string.Empty;
@@ -140,6 +144,9 @@ public sealed partial class MainViewModel : INotifyPropertyChanged, IAsyncDispos
         _connection.StateChanged += state => OnUi(() =>
         {
             _state = state;
+            // 使用本次实际连接的地址；编辑输入框不会将预览切到另一台设备。
+            Preview.SetConnection(state == ConnectionState.Connected && _previewConnectionEnabled
+                && _disposed == 0 && _connection.State == ConnectionState.Connected ? _connectedHost : null);
             if (state is ConnectionState.Disconnected or ConnectionState.Faulted or ConnectionState.Reconnecting)
                 ClearAutofocusConfiguration();
             else if (state == ConnectionState.Connected)
@@ -457,12 +464,17 @@ public sealed partial class MainViewModel : INotifyPropertyChanged, IAsyncDispos
             return;
         }
         _isBusy = true;
+        using var connectCancellation = new CancellationTokenSource();
+        _connectCancellation = connectCancellation;
         OnPropertyChanged(nameof(CanConnect));
         OnPropertyChanged(nameof(CanDisconnect));
         try
         {
             var settings = new ConnectionSettings(host.Trim(), port, ProtocolLimits.WorkbenchTag, GetStableClientId(), "FocusIR.Workbench", AppVersion.Current);
-            var summary = await _connection.ConnectAsync(settings);
+            _connectedHost = settings.Host;
+            _previewConnectionEnabled = true;
+            var summary = await _connection.ConnectAsync(settings, connectCancellation.Token);
+            connectCancellation.Token.ThrowIfCancellationRequested();
             _device = summary;
             _statusNotice = summary.ConnectionNotice;
             AddActivity($"连接成功：{summary.SerialNumber}，来源：{SourceBadgeText}。");
@@ -471,11 +483,13 @@ public sealed partial class MainViewModel : INotifyPropertyChanged, IAsyncDispos
                 try { await RefreshProfilesCoreAsync(true); }
                 catch(Exception ex) { AddActivity($"连接成功，物距配置读取失败：{ex.Message}；可点击刷新配置重试。"); }
             }
+            connectCancellation.Token.ThrowIfCancellationRequested();
             if (Supports("tracking.get"))
             {
                 try { ApplyTrackingState(await _connection.GetTrackingAsync(),true); }
                 catch (Exception ex) { AddActivity($"连接已成功，联动状态读取失败：{ex.Message}；可点击刷新联动状态重试。"); }
             }
+            connectCancellation.Token.ThrowIfCancellationRequested();
             if (Supports("af.get_config"))
             {
                 try { await ReadAutofocusConfigurationCoreAsync(); }
@@ -484,12 +498,17 @@ public sealed partial class MainViewModel : INotifyPropertyChanged, IAsyncDispos
         }
         catch (Exception ex)
         {
+            _previewConnectionEnabled = false;
+            _connectedHost = null;
+            await Preview.StopAsync();
+            if (_disposed != 0) return;
             _statusNotice = ex.Message;
             AddActivity($"连接失败：{ex.Message}");
             OnPropertyChanged(nameof(StatusNotice));
         }
         finally
         {
+            if (ReferenceEquals(_connectCancellation, connectCancellation)) _connectCancellation = null;
             _isBusy = false;
             RefreshAutofocusConfigurationProperties();
             OnPropertyChanged(nameof(CanConnect));
@@ -499,28 +518,40 @@ public sealed partial class MainViewModel : INotifyPropertyChanged, IAsyncDispos
 
     public async Task DisconnectAsync()
     {
-        await EndManualJogAsync("连接断开");
-        await StopTaskMonitorAsync();
-        await _connection.DisconnectAsync();
-        ClearProfiles();
-        ClearAutofocusConfiguration();
-        _tracking = null;
-        _device = null;
-        _snapshot = null;
-        _snapshotReceivedTick = null;
-        _temperature = null;
-        _lastTaskId = null;
-        _lastTaskKind = null;
-        _latestTaskStatus = null;
-        _autofocusResult = null;
-        _factoryValidation = null;
-        _factoryResult = null;
-        _factoryRecipeHash = null;
-        _lease = null;
-        _statusNotice = "连接已断开。";
-        RefreshDeviceProperties();
-        RefreshSnapshotProperties();
-        OnPropertyChanged(nameof(StatusNotice));
+        _previewConnectionEnabled = false;
+        _connectedHost = null;
+        _connectCancellation?.Cancel();
+        // 先撤销视频连接，再等待运动停止、任务监视与主会话清理。
+        var previewStop = Preview.StopAsync();
+        try
+        {
+            await EndManualJogAsync("连接断开");
+            await StopTaskMonitorAsync();
+            await _connection.DisconnectAsync();
+            ClearProfiles();
+            ClearAutofocusConfiguration();
+            _tracking = null;
+            _device = null;
+            _snapshot = null;
+            _snapshotReceivedTick = null;
+            _temperature = null;
+            _lastTaskId = null;
+            _lastTaskKind = null;
+            _latestTaskStatus = null;
+            _autofocusResult = null;
+            _factoryValidation = null;
+            _factoryResult = null;
+            _factoryRecipeHash = null;
+            _lease = null;
+            _statusNotice = "连接已断开。";
+            RefreshDeviceProperties();
+            RefreshSnapshotProperties();
+            OnPropertyChanged(nameof(StatusNotice));
+        }
+        finally
+        {
+            await previewStop;
+        }
     }
 
     public async Task StopAllAsync()
@@ -2388,15 +2419,26 @@ public sealed partial class MainViewModel : INotifyPropertyChanged, IAsyncDispos
     public async ValueTask DisposeAsync()
     {
         if (Interlocked.Exchange(ref _disposed, 1) != 0) return;
+        _previewConnectionEnabled = false;
+        _connectedHost = null;
+        _connectCancellation?.Cancel();
+        var previewDispose = Preview.DisposeAsync();
         _snapshotAgeTimer.Stop();
         _updateCancellation?.Cancel();
 
-        await EndManualJogAsync("工作台关闭");
-        await StopTaskMonitorAsync();
-        Charts.Dispose();
-        await _connection.DisposeAsync();
-        _updateCancellation?.Dispose();
-        _updateHttpClient.Dispose();
-        _taskRefreshNotifications.Writer.TryComplete();
+        try
+        {
+            await EndManualJogAsync("工作台关闭");
+            await StopTaskMonitorAsync();
+            Charts.Dispose();
+            await _connection.DisposeAsync();
+            _updateCancellation?.Dispose();
+            _updateHttpClient.Dispose();
+            _taskRefreshNotifications.Writer.TryComplete();
+        }
+        finally
+        {
+            await previewDispose;
+        }
     }
 }

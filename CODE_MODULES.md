@@ -10,6 +10,7 @@
 | --- | --- | --- |
 | WPF 界面 | `App.xaml*`、`MainWindow.xaml*` | 启动、窗口布局、控件事件与停止入口 |
 | 页面状态 | `ViewModels/MainViewModel*.cs` | 连接、能力、控制租约、任务状态、操作命令与升级交互 |
+| 实时预览 | `ViewModels/DevicePreviewViewModel.cs`、`Services/DevicePreviewSession.cs`、`Services/LiveVideoRelay.cs`、`Controls/VideoAspectBox.cs` | 随设备会话启停 WebSocket，码流片段直接交接、低延迟解码、按视频比例自适应布局与预览重连 |
 | 镜头与物距 | `MainViewModel.Profiles.cs`、`MainViewModel.LensInitialization.cs` | 镜头型号、物距配置、删除、初始化、激活与复验 |
 | 曲线编辑 | `MainViewModel.CurveEditing.cs`、`CalibrationChartsViewModel*.cs`、`Controls/CalibrationPlot.cs` | 节点拖动草稿、采样/模型可视化、保存应用和 CSV 导出 |
 | 标定参数 | `MainViewModel.AutofocusConfiguration.cs`、`Domain/FactoryCalibrationData.cs` | AF 参数、工厂配方、节点/样本读取与解释 |
@@ -29,6 +30,7 @@
 ## 关键行为与维护入口
 
 - 连接：`WorkbenchConnectionService.OpenSessionAsync` 校验握手、读取能力与快照，再开始心跳和事件订阅；`ReconnectLoopAsync` 恢复只读状态，不复用已失效的控制租约。
+- 预览：`MainViewModel` 将设备会话状态与实际连接地址交给 `DevicePreviewViewModel`；视频链路连接固定端口 8877 的 `/infrared_mainstream`，由 `LiveVideoRelay` 将当前接收片段直接交给 LibVLC 解码，不建立帧队列。直通流只绑定回环地址并接受一个播放器连接，以使用 `network-caching=0` 的网络输入绕开 imem 固定 PTS 延迟，解码参考帧仍由解码器管理。`VideoAspectBox` 根据源视频显示比例安排播放窗口，`MainWindow` 在宽/窄窗口间切换并排/上下布局。主会话断开或重连时撤销视频连接，窗口关闭前等待播放器清理。
 - RPC：`ProtocolClient` 用请求 ID 配对响应。运动或任务请求超时后，连接服务查询原请求状态，避免重发导致重复物理动作；长按运动使用启动、保活和高优先级停止三段请求。
 - 事件：`DeviceStateStore` 以快照为基线合并可靠事件；发现事件缺口时重新读取快照并订阅。
 - 任务：`MainViewModel` 负责用户操作与状态展示；设备持续任务仍由设备端执行，工作台只查询、取消或停止。

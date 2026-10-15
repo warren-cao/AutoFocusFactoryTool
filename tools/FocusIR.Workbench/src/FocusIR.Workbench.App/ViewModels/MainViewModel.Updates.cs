@@ -190,7 +190,8 @@ public sealed partial class MainViewModel
                 throw new InvalidOperationException("启动器进程未能启动。");
 
             SetUpdateStatus($"正在退出并安装 v{_downloadedUpdate.Version}…");
-            System.Windows.Application.Current.Shutdown();
+            // 经过主窗口的异步关闭流程，等待视频和设备会话释放后再退出。
+            System.Windows.Application.Current.MainWindow.Close();
             return true;
         }
         catch (Exception ex)

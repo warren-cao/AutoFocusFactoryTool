@@ -1,6 +1,7 @@
 using System.Windows;
 using System.Windows.Input;
 using System.Windows.Controls;
+using System.ComponentModel;
 using FocusIR.Workbench.App.ViewModels;
 
 namespace FocusIR.Workbench.App;
@@ -10,13 +11,16 @@ public partial class MainWindow : Window
     private readonly MainViewModel _viewModel;
     private UpdateWindow? _updateWindow;
     private bool _startupUpdateCheckScheduled;
+    private bool _closing;
+    private bool _closeCompleted;
+    private bool? _previewPanelsSideBySide;
 
     public MainWindow()
     {
         InitializeComponent();
         _viewModel = new MainViewModel();
         DataContext = _viewModel;
-        Closed += async (_, _) => await _viewModel.DisposeAsync();
+        Closing += Window_Closing;
         Deactivated += async (_, _) => await _viewModel.EndManualJogAsync("窗口失去焦点");
     }
 
@@ -50,6 +54,66 @@ public partial class MainWindow : Window
     private async void VerifyProfile_Click(object sender,RoutedEventArgs e) => await _viewModel.StartProfileTaskAsync(true);
 
     private async void Disconnect_Click(object sender, RoutedEventArgs e) => await _viewModel.DisconnectAsync();
+
+    private void ReconnectPreview_Click(object sender, RoutedEventArgs e) => _viewModel.Preview.Reconnect();
+
+    private void PreviewWorkspace_SizeChanged(object sender, SizeChangedEventArgs e)
+    {
+        if (PreviewPanel is null || DetailsPanel is null || PreviewSplitter is null) return;
+        var width = e.NewSize.Width;
+        var height = e.NewSize.Height;
+        // 使用迟滞区间，避免在临界宽度反复切换，也保留同一布局内用户拖动的比例。
+        var sideBySide = _previewPanelsSideBySide == true
+            ? width >= 1040 && width >= height * 1.65
+            : width >= 1120 && width >= height * 1.8;
+        if (_previewPanelsSideBySide == sideBySide) return;
+        _previewPanelsSideBySide = sideBySide;
+
+        PreviewColumn.MinWidth = sideBySide ? 400 : 0;
+        DetailsColumn.MinWidth = sideBySide ? 420 : 0;
+        PreviewColumn.Width = new GridLength(sideBySide ? 58 : 1, GridUnitType.Star);
+        PreviewDividerColumn.Width = new GridLength(sideBySide ? 8 : 0);
+        DetailsColumn.Width = sideBySide ? new GridLength(42, GridUnitType.Star) : new GridLength(0);
+        PreviewRow.MinHeight = sideBySide ? 0 : 230;
+        DetailsRow.MinHeight = sideBySide ? 0 : 180;
+        PreviewRow.Height = new GridLength(sideBySide ? 1 : 55, GridUnitType.Star);
+        PreviewDividerRow.Height = new GridLength(sideBySide ? 0 : 8);
+        DetailsRow.Height = sideBySide ? new GridLength(0) : new GridLength(45, GridUnitType.Star);
+        Grid.SetRow(PreviewSplitter, sideBySide ? 0 : 1);
+        Grid.SetColumn(PreviewSplitter, sideBySide ? 1 : 0);
+        Grid.SetRow(DetailsPanel, sideBySide ? 0 : 2);
+        Grid.SetColumn(DetailsPanel, sideBySide ? 2 : 0);
+        PreviewSplitter.Width = sideBySide ? 6 : double.NaN;
+        PreviewSplitter.Height = sideBySide ? double.NaN : 6;
+        PreviewSplitter.HorizontalAlignment = sideBySide ? HorizontalAlignment.Center : HorizontalAlignment.Stretch;
+        PreviewSplitter.VerticalAlignment = sideBySide ? VerticalAlignment.Stretch : VerticalAlignment.Center;
+        PreviewSplitter.ResizeDirection = sideBySide ? GridResizeDirection.Columns : GridResizeDirection.Rows;
+        PreviewSplitter.Cursor = sideBySide ? Cursors.SizeWE : Cursors.SizeNS;
+        PreviewSplitter.ToolTip = sideBySide ? "左右拖动调整预览和标定信息的宽度" : "上下拖动调整预览和标定信息的高度";
+    }
+
+    private async void Window_Closing(object? sender, CancelEventArgs e)
+    {
+        if (_closeCompleted) return;
+        e.Cancel = true;
+        if (_closing) return;
+        _closing = true;
+        IsEnabled = false;
+        try
+        {
+            await _viewModel.DisposeAsync();
+        }
+        catch (Exception ex)
+        {
+            System.Diagnostics.Trace.TraceError($"关闭工作台时释放连接失败：{ex}");
+        }
+        finally
+        {
+            _closeCompleted = true;
+            // 退出当前 Closing 回调后再关闭窗口，保留异步清理所需的 Dispatcher。
+            await Dispatcher.InvokeAsync(() => { if (IsLoaded) Close(); });
+        }
+    }
 
     private async void Stop_Click(object sender, RoutedEventArgs e) => await _viewModel.StopAllAsync();
 
