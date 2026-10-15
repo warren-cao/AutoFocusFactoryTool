@@ -2,9 +2,15 @@
 
 此仓库仅用于发布 FocusIR 自动聚焦工厂工作台的 Windows x64 稳定版本，**不存放应用源码**。
 
+`notes/vX.Y.Z.md` 记录每个发布标签的改动项，和对应签名清单中的发布说明一致。说明由标签之间的 Git 提交与附注标签自动生成，上位机检查更新时会展示清单中的内容。
+
 - [正式版本与下载](https://gitee.com/warren-cao/focusir-workbench-releases/releases)
 - 适用平台：Windows x64；程序包自包含 .NET 运行时。
 - 已安装的新版本可通过工作台的“帮助 → 检查更新”获取升级。
+
+`v0.3.2` 起，检查更新读取本仓库 `master` 分支中 `latest/update-manifest.json` 与 `latest/update-manifest.sig` 的公开原始文件，不调用 Release 查询 API。升级包仍来自正式 Release 的附件，清单与签名由发布工作流在正式发布完成后同步。
+
+若已安装的 `v0.3.1` 或更早版本因 API 限流无法检查更新，请下载新版本并按下方步骤人工安装一次。
 
 ## 下载与首次安装
 

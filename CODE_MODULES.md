@@ -15,13 +15,13 @@
 | 标定参数 | `MainViewModel.AutofocusConfiguration.cs`、`Domain/FactoryCalibrationData.cs` | AF 参数、工厂配方、节点/样本读取与解释 |
 | 应用边界 | `Application/IWorkbenchConnectionService.cs`、`IUpdateService.cs` | 界面依赖的连接、业务操作与升级契约 |
 | 会话实现 | `Infrastructure/WorkbenchConnectionService.cs` | 握手、能力校验、RPC、心跳、租约续期、任务查询、重连、事件缺口恢复 |
-| 升级服务 | `Infrastructure/GiteeUpdateService.cs`、`Domain/UpdateModels.cs` | Gitee Release 查询、清单验签、版本判断、下载及完整性校验 |
+| 升级服务 | `Infrastructure/GiteeUpdateService.cs`、`Domain/UpdateModels.cs` | Gitee 静态清单与签名读取、版本判断、Release 附件下载及完整性校验 |
 | 独立更新器 | `FocusIR.Workbench.Updater/*` | 用户目录安装、版本切换、启动健康检查、回滚、自更新和快捷方式 |
 | 状态缓存 | `Infrastructure/DeviceStateStore.cs` | 快照与事件合并，过滤失序或过期状态 |
 | 传输协议 | `Protocol/ProtocolClient.cs`、`FrameCodec.cs`、`PrioritySendQueue.cs`、`ProtocolLimits.cs` | TCP 长度帧、JSON 请求响应关联、发送优先级与协议限额 |
 | 领域类型 | `Domain/DeviceModels.cs` | 连接状态、设备摘要、数据来源和租约等类型 |
 | 共享合同 | `contracts/v1/method-catalog.json`、`schemas/`、`samples/` | RPC 方法、参数约束与示例消息 |
-| 构建发布 | `Directory.Build.props`、`eng/*.ps1`、`.github/workflows/release-self-hosted.yml` | 集中版本、自托管手动构建、签名打包及 Gitee/GitHub 双端发布 |
+| 构建发布 | `Directory.Build.props`、`eng/*.ps1`、`.github/workflows/release-self-hosted.yml` | 标签版本、自托管自动构建、签名打包及 Gitee/GitHub 双端发布 |
 | 自动测试 | `tools/FocusIR.Workbench/tests/` | 升级协议、下载校验、包安装、路径安全、状态切换和回滚的纯软件验证 |
 
 `src` 下工作台项目的依赖方向是 App → Application/Infrastructure/Domain，Infrastructure → Application/Protocol/Domain；Protocol 与 Domain 不依赖 WPF。独立 Updater 不引用 WPF 主程序，以便在主程序退出后完成版本切换和回滚。解决方案入口为 `FocusIR.Workbench.sln`。
@@ -35,8 +35,8 @@
 - 标定：`FactoryCalibrationData` 读取分页记录；`CalibrationChartsViewModel` 展示双向节点和原始清晰度；曲线编辑保存前使用当前模型 ID 做并发校验。
 - 手动运动：`MainWindow` 捕获长按和松开，`MainViewModel` 每250 ms保活；设备800 ms看门狗负责断连或保活丢失后的停止。
 - 协议变更：先核对 `contracts/v1/method-catalog.json` 与相关 Schema，再同步修改上位机连接服务和设备端分发器。能力表决定界面是否开放相应操作。
-- 发布：`release-self-hosted.yml` 是唯一发布入口，推送源码标签后手动运行；`eng/release.ps1` 只接受与集中版本和更新日志一致、且属于 `master` 历史的稳定版标签，调用既有 CI，生成四个不可覆盖的 Release 附件。本地修改仅做源码检查与编译。
+- 发布：`release-self-hosted.yml` 在稳定标签推送后自动运行，标签提交须属于 `master` 历史；`eng/release.ps1` 从标签注入编译版本、生成提交变更说明，并调用既有 CI，生成四个不可覆盖的 Release 附件。本地修改仅做源码检查与编译。
 - 签名：`eng/New-UpdateSigningKey.ps1` 生成 ECDSA P-256 密钥；流水线私钥保存在 GitHub Actions Secret，客户端仅按 `keyId` 内置并信任对应公钥。
-- 升级：应用仅负责匿名检查、验签和下载；设备断开且无任务/租约/编辑后才启动独立更新器。更新器在新版本窗口报告健康后提交升级，否则自动切回上一版。
+- 升级：应用匿名读取发布仓 `master/latest` 的成对签名文件，不调用 Release API；发布端只在正式发布完成后通过一次 Git 提交更新入口。设备断开且无任务/租约/编辑后才启动独立更新器；启动健康检查失败时自动回滚。
 
 本说明对应当前解决方案中的生产项目及其构建发布基础设施。

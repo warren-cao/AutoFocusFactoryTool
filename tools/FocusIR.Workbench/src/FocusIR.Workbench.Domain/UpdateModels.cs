@@ -143,39 +143,31 @@ public sealed record UpdateManifest(
     }
 }
 
-public sealed record ReleaseAsset(string Name, Uri DownloadUri, long Size);
-
 public sealed class UpdateRelease
 {
     public UpdateRelease(
-        long releaseId,
         SemanticVersion version,
         string tag,
         DateTimeOffset publishedAtUtc,
         string releaseNotes,
         UpdateManifest manifest,
-        IReadOnlyList<ReleaseAsset> assets,
         ReadOnlySpan<byte> manifestBytes,
         ReadOnlySpan<byte> manifestSignature)
     {
-        ReleaseId = releaseId;
         Version = version;
         Tag = tag;
         PublishedAtUtc = publishedAtUtc;
         ReleaseNotes = releaseNotes;
         Manifest = manifest;
-        Assets = assets.ToArray();
         ManifestBytes = manifestBytes.ToArray();
         ManifestSignature = manifestSignature.ToArray();
     }
 
-    public long ReleaseId { get; }
     public SemanticVersion Version { get; }
     public string Tag { get; }
     public DateTimeOffset PublishedAtUtc { get; }
     public string ReleaseNotes { get; }
     public UpdateManifest Manifest { get; }
-    public IReadOnlyList<ReleaseAsset> Assets { get; }
     public ReadOnlyMemory<byte> ManifestBytes { get; }
     public ReadOnlyMemory<byte> ManifestSignature { get; }
 }

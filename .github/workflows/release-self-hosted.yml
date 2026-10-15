@@ -1,12 +1,15 @@
 name: FocusIR Release (Self-hosted)
 
 # Never run untrusted PRs on a persistent factory/build workstation.
-# Manual only: push the source tag first, then dispatch this workflow from master.
+# Stable tag pushes publish automatically; manual dispatch remains available.
 on:
+  push:
+    tags:
+      - 'v*'
   workflow_dispatch:
     inputs:
       tag:
-        description: 'Existing stable tag, e.g. v0.2.2'
+        description: 'Existing stable tag, e.g. v0.3.2'
         required: true
         type: string
       publish:
@@ -35,9 +38,9 @@ jobs:
       run:
         shell: pwsh
     env:
-      RELEASE_TAG: ${{ inputs.tag }}
+      RELEASE_TAG: ${{ inputs.tag || github.ref_name }}
       RELEASE_TOOLING_COMMIT: ${{ github.workflow_sha }}
-      PUBLISH_RELEASE: ${{ inputs.publish }}
+      PUBLISH_RELEASE: ${{ github.event_name == 'push' || inputs.publish }}
       EXPECTED_RUNNER_NAME: DESKTOP-AI3E9IB
       GITEE_REPOSITORY: warren-cao/focusir-workbench-releases
       GITEE_RELEASE_TARGET: ${{ vars.GITEE_RELEASE_TARGET }}
@@ -56,7 +59,9 @@ jobs:
 
       - name: Validate request and self-hosted environment
         run: |
-          if ($env:GITHUB_REF -ne 'refs/heads/master') { throw 'Run this trusted workflow from master.' }
+          if ($env:GITHUB_EVENT_NAME -eq 'workflow_dispatch' -and $env:GITHUB_REF -ne 'refs/heads/master') {
+            throw 'Run manual workflows from master.'
+          }
           if ($env:RELEASE_TAG -cnotmatch '^v(0|[1-9]\d*)\.(0|[1-9]\d*)\.(0|[1-9]\d*)$') {
             throw 'Release tag must be a canonical stable vX.Y.Z tag.'
           }
@@ -72,6 +77,11 @@ jobs:
           fetch-depth: 0
           persist-credentials: false
 
+      - name: Check tag lineage before loading release tools or secrets
+        run: |
+          git merge-base --is-ancestor HEAD refs/remotes/origin/master
+          if ($LASTEXITCODE -ne 0) { throw 'The release commit must belong to master.' }
+
       - name: Install .NET SDK into runner temporary directory
         uses: actions/setup-dotnet@a98b56852c35b8e3190ac28c8c2271da59106c68 # v6
         env:
@@ -80,19 +90,17 @@ jobs:
         with:
           global-json-file: global.json
 
-      - name: Check signing secret and tag lineage
+      - name: Check signing secret
         env:
           UPDATE_SIGNING_KEY_PKCS8: ${{ secrets.UPDATE_SIGNING_KEY_PKCS8 }}
         run: |
           if ([string]::IsNullOrWhiteSpace($env:UPDATE_SIGNING_KEY_PKCS8)) { throw 'Configure UPDATE_SIGNING_KEY_PKCS8 first.' }
-          git merge-base --is-ancestor HEAD refs/remotes/origin/master
-          if ($LASTEXITCODE -ne 0) { throw 'The release commit must belong to master.' }
 
       - name: Load trusted release tooling from workflow commit
         run: |
           $toolingDirectory = Join-Path $env:RUNNER_TEMP "focusir-tooling-$env:GITHUB_RUN_ID-$env:GITHUB_RUN_ATTEMPT"
           $null = [IO.Directory]::CreateDirectory($toolingDirectory)
-          foreach ($name in @('release.ps1', 'Publish-GiteeRelease.ps1', 'Publish-GitHubRelease.ps1')) {
+          foreach ($name in @('ci.ps1', 'release.ps1', 'Publish-GiteeRelease.ps1', 'Publish-GitHubRelease.ps1')) {
             $toolingSource = @(git show ('{0}:eng/{1}' -f $env:RELEASE_TOOLING_COMMIT, $name))
             if ($LASTEXITCODE -ne 0) { throw "Unable to load trusted tooling: $name" }
             [IO.File]::WriteAllText((Join-Path $toolingDirectory $name), ($toolingSource -join "`n"), [Text.UTF8Encoding]::new($false))
@@ -135,6 +143,13 @@ jobs:
           GH_TOKEN: ${{ github.token }}
         run: |
           & "$env:FOCUSIR_TOOLING/Publish-GitHubRelease.ps1" -Tag $env:RELEASE_TAG -SourceDirectory $env:GITHUB_WORKSPACE
+
+      - name: Publish the signed static update feed after both releases are ready
+        if: env.PUBLISH_RELEASE == 'true'
+        env:
+          GITEE_TOKEN: ${{ secrets.GITEE_TOKEN }}
+        run: |
+          & "$env:FOCUSIR_TOOLING/Publish-GiteeRelease.ps1" -Tag $env:RELEASE_TAG -Mode PublishFeed -SourceDirectory $env:GITHUB_WORKSPACE
 
       - name: Preserve test, build and upload diagnostics
         if: always()

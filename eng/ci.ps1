@@ -1,13 +1,16 @@
 [CmdletBinding()]
 param(
     [switch]$SkipCleanCheck,
-    [switch]$SkipCoverage
+    [switch]$SkipCoverage,
+    [string]$SourceDirectory,
+    [ValidatePattern('^(0|[1-9]\d*)\.(0|[1-9]\d*)\.(0|[1-9]\d*)$')]
+    [string]$VersionPrefix
 )
 
 Set-StrictMode -Version Latest
 $ErrorActionPreference = 'Stop'
 
-$repositoryRoot = Split-Path -Parent $PSScriptRoot
+$repositoryRoot = if ($SourceDirectory) { [IO.Path]::GetFullPath($SourceDirectory) } else { Split-Path -Parent $PSScriptRoot }
 $solutionPath = Join-Path $repositoryRoot 'FocusIR.Workbench.sln'
 $resultsDirectory = Join-Path $repositoryRoot 'artifacts\test-results'
 $buildDirectory = Join-Path $repositoryRoot 'artifacts\build'
@@ -76,7 +79,7 @@ try {
     New-Item -ItemType Directory -Path $resultsDirectory, $buildDirectory -Force | Out-Null
 
     Invoke-CheckedCommand -FilePath dotnet -Arguments @('restore', $solutionPath, '--locked-mode')
-    Invoke-CheckedCommand -FilePath dotnet -Arguments @(
+    $buildArguments = @(
         'build',
         $solutionPath,
         '-c', 'Release',
@@ -85,6 +88,8 @@ try {
         '-p:ContinuousIntegrationBuild=true',
         "-bl:$buildLogPath"
     )
+    if ($VersionPrefix) { $buildArguments += "-p:VersionPrefix=$VersionPrefix" }
+    Invoke-CheckedCommand -FilePath dotnet -Arguments $buildArguments
 
     $testArguments = @(
         'test',

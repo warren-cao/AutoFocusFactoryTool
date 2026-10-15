@@ -13,7 +13,6 @@ public sealed class GiteeUpdateService : IUpdateService
 {
     private const string ManifestFileName = "update-manifest.json";
     private const string SignatureFileName = "update-manifest.sig";
-    private const string ChecksumsFileName = "SHA256SUMS.txt";
     private const string GiteeHost = "gitee.com";
     private const string GiteeDownloadHost = "foruda.gitee.com";
     private static readonly JsonSerializerOptions ManifestJsonOptions = new()
@@ -51,58 +50,47 @@ public sealed class GiteeUpdateService : IUpdateService
         SemanticVersion currentVersion,
         CancellationToken cancellationToken = default)
     {
-        var latestUri = BuildApiUri($"releases/latest");
-        using var latestResponse = await SendGetAsync(latestUri, cancellationToken).ConfigureAwait(false);
-        if (latestResponse.StatusCode == HttpStatusCode.NotFound)
-            return new UpdateCheckResult(currentVersion, UpdateCheckStatus.NoStableRelease, null);
+        // 两个固定文件可能在连续请求间更新；只重读一次，仍必须通过验签。
+        for (var attempt = 0; attempt < 2; attempt++)
+        {
+            using var manifestResponse = await SendGetAsync(BuildFeedUri(ManifestFileName), cancellationToken)
+                .ConfigureAwait(false);
+            if (manifestResponse.StatusCode == HttpStatusCode.NotFound)
+                return new UpdateCheckResult(currentVersion, UpdateCheckStatus.NoStableRelease, null);
+            EnsureSuccessfulResponse(manifestResponse);
+            var manifestBytes = await ReadBoundedResponseAsync(manifestResponse, _options.MaxManifestBytes, cancellationToken)
+                .ConfigureAwait(false);
+            var signatureFileBytes = await GetBoundedBytesAsync(BuildFeedUri(SignatureFileName), _options.MaxSignatureBytes, cancellationToken)
+                .ConfigureAwait(false);
+            var manifest = DeserializeManifest(manifestBytes);
+            var manifestVersion = manifest.Validate();
+            var signature = DecodeSignature(signatureFileBytes);
+            try
+            {
+                VerifyManifestSignature(manifest, manifestBytes, signature);
+            }
+            catch (UpdateValidationException) when (attempt == 0)
+            {
+                continue;
+            }
 
-        latestResponse.EnsureSuccessStatusCode();
-        var latestBytes = await ReadBoundedResponseAsync(latestResponse, _options.MaxManifestBytes, cancellationToken)
-            .ConfigureAwait(false);
-        var metadata = ParseReleaseMetadata(latestBytes);
-        if (metadata.Prerelease || !SemanticVersion.TryParseTag(metadata.Tag, out var releaseVersion))
-            return new UpdateCheckResult(currentVersion, UpdateCheckStatus.NoStableRelease, null);
-        if (releaseVersion <= currentVersion)
-            return new UpdateCheckResult(currentVersion, UpdateCheckStatus.UpToDate, null);
+            EnsurePackageUri(manifest);
+            if (manifest.Package.Size > _options.MaxPackageBytes)
+                throw new UpdateValidationException($"升级包超过允许的最大大小 {_options.MaxPackageBytes} 字节。");
+            if (manifestVersion <= currentVersion)
+                return new UpdateCheckResult(currentVersion, UpdateCheckStatus.UpToDate, null);
 
-        var assetsUri = BuildApiUri($"releases/{metadata.Id}/attach_files?page=1&per_page=100&direction=asc");
-        var assetsBytes = await GetBoundedBytesAsync(assetsUri, _options.MaxManifestBytes, cancellationToken)
-            .ConfigureAwait(false);
-        var assets = ParseAssets(assetsBytes);
-        var manifestAsset = RequireUniqueAsset(assets, ManifestFileName);
-        var signatureAsset = RequireUniqueAsset(assets, SignatureFileName);
-        _ = RequireUniqueAsset(assets, ChecksumsFileName);
-
-        var manifestBytes = await GetBoundedBytesAsync(manifestAsset.DownloadUri, _options.MaxManifestBytes, cancellationToken)
-            .ConfigureAwait(false);
-        var signatureFileBytes = await GetBoundedBytesAsync(signatureAsset.DownloadUri, _options.MaxSignatureBytes, cancellationToken)
-            .ConfigureAwait(false);
-        var manifest = DeserializeManifest(manifestBytes);
-        var manifestVersion = manifest.Validate();
-        var signature = DecodeSignature(signatureFileBytes);
-        VerifyManifestSignature(manifest, manifestBytes, signature);
-
-        if (manifestVersion != releaseVersion || !string.Equals(manifest.Tag, metadata.Tag, StringComparison.Ordinal))
-            throw new UpdateValidationException("Release 标签与升级清单版本不一致。");
-        EnsureGiteeEntryUri(new Uri(manifest.Package.Url, UriKind.Absolute));
-        if (manifest.Package.Size > _options.MaxPackageBytes)
-            throw new UpdateValidationException($"升级包超过允许的最大大小 {_options.MaxPackageBytes} 字节。");
-
-        var packageAsset = RequireUniqueAsset(assets, manifest.Package.FileName);
-        if (packageAsset.Size > 0 && packageAsset.Size != manifest.Package.Size)
-            throw new UpdateValidationException("升级清单中的包大小与 Release 附件信息不一致。");
-
-        var release = new UpdateRelease(
-            metadata.Id,
-            releaseVersion,
-            metadata.Tag,
-            manifest.PublishedAtUtc,
-            manifest.ReleaseNotes,
-            manifest,
-            assets,
-            manifestBytes,
-            signature);
-        return new UpdateCheckResult(currentVersion, UpdateCheckStatus.UpdateAvailable, release);
+            var release = new UpdateRelease(
+                manifestVersion,
+                manifest.Tag,
+                manifest.PublishedAtUtc,
+                manifest.ReleaseNotes,
+                manifest,
+                manifestBytes,
+                signature);
+            return new UpdateCheckResult(currentVersion, UpdateCheckStatus.UpdateAvailable, release);
+        }
+        throw new UpdateValidationException("升级入口的清单与签名不一致，请稍后重新检查。");
     }
 
     public async Task<UpdateDownloadResult> DownloadUpdateAsync(
@@ -125,7 +113,7 @@ public sealed class GiteeUpdateService : IUpdateService
 
             var package = release.Manifest.Package;
             var packageUri = new Uri(package.Url, UriKind.Absolute);
-            EnsureGiteeEntryUri(packageUri);
+            EnsurePackageUri(release.Manifest);
             if (package.Size > _options.MaxPackageBytes)
                 throw new UpdateValidationException($"升级包超过允许的最大大小 {_options.MaxPackageBytes} 字节。");
             EnsureSafeFileName(package.FileName);
@@ -149,7 +137,7 @@ public sealed class GiteeUpdateService : IUpdateService
             try
             {
                 using var response = await SendGetAsync(packageUri, cancellationToken).ConfigureAwait(false);
-                response.EnsureSuccessStatusCode();
+                EnsureSuccessfulResponse(response);
                 if (response.Content.Headers.ContentLength is { } contentLength
                     && contentLength != package.Size)
                     throw new UpdateValidationException("服务器返回的升级包长度与清单不一致。");
@@ -240,7 +228,7 @@ public sealed class GiteeUpdateService : IUpdateService
     private async Task<byte[]> GetBoundedBytesAsync(Uri uri, int maximumBytes, CancellationToken cancellationToken)
     {
         using var response = await SendGetAsync(uri, cancellationToken).ConfigureAwait(false);
-        response.EnsureSuccessStatusCode();
+        EnsureSuccessfulResponse(response);
         return await ReadBoundedResponseAsync(response, maximumBytes, cancellationToken).ConfigureAwait(false);
     }
 
@@ -250,6 +238,7 @@ public sealed class GiteeUpdateService : IUpdateService
         using var request = new HttpRequestMessage(HttpMethod.Get, uri);
         request.Headers.UserAgent.Add(new ProductInfoHeaderValue("FocusIR.Workbench", "1.0"));
         request.Headers.AcceptEncoding.ParseAdd("identity");
+        request.Headers.CacheControl = new CacheControlHeaderValue { NoCache = true };
         var response = await _httpClient.SendAsync(request, HttpCompletionOption.ResponseHeadersRead, cancellationToken)
             .ConfigureAwait(false);
         try
@@ -357,82 +346,24 @@ public sealed class GiteeUpdateService : IUpdateService
         }
     }
 
-    private static ReleaseMetadata ParseReleaseMetadata(ReadOnlySpan<byte> bytes)
+    private Uri BuildFeedUri(string fileName) =>
+        new($"https://gitee.com/{_options.Owner}/{_options.Repository}/raw/master/latest/{fileName}", UriKind.Absolute);
+
+    private void EnsurePackageUri(UpdateManifest manifest)
     {
-        try
-        {
-            using var document = JsonDocument.Parse(bytes.ToArray(), new JsonDocumentOptions { MaxDepth = 16 });
-            var root = document.RootElement;
-            if (root.ValueKind != JsonValueKind.Object
-                || !root.TryGetProperty("id", out var idElement)
-                || !idElement.TryGetInt64(out var id)
-                || id <= 0)
-                throw new UpdateValidationException("Gitee Release 缺少有效的 id。");
-            var tag = ReadRequiredString(root, "tag_name");
-            var prerelease = root.TryGetProperty("prerelease", out var prereleaseElement)
-                && ReadBooleanLike(prereleaseElement, "prerelease");
-            return new ReleaseMetadata(id, tag, prerelease);
-        }
-        catch (JsonException exception)
-        {
-            throw new UpdateValidationException("Gitee Release 响应不是有效的 JSON。", exception);
-        }
+        var uri = new Uri(manifest.Package.Url, UriKind.Absolute);
+        EnsureGiteeEntryUri(uri);
+        var expected = $"https://gitee.com/{_options.Owner}/{_options.Repository}/releases/download/{manifest.Tag}/{manifest.Package.FileName}";
+        if (!string.Equals(uri.AbsoluteUri, expected, StringComparison.Ordinal))
+            throw new UpdateValidationException("升级包地址必须指向当前 Gitee 发布仓的对应版本附件。");
     }
 
-    private static bool ReadBooleanLike(JsonElement element, string propertyName) => element.ValueKind switch
+    private static void EnsureSuccessfulResponse(HttpResponseMessage response)
     {
-        JsonValueKind.True => true,
-        JsonValueKind.False => false,
-        JsonValueKind.String when bool.TryParse(element.GetString(), out var parsed) => parsed,
-        _ => throw new UpdateValidationException($"Gitee 响应中的 {propertyName} 不是有效布尔值。")
-    };
-
-    private static IReadOnlyList<ReleaseAsset> ParseAssets(ReadOnlySpan<byte> bytes)
-    {
-        try
-        {
-            using var document = JsonDocument.Parse(bytes.ToArray(), new JsonDocumentOptions { MaxDepth = 16 });
-            if (document.RootElement.ValueKind != JsonValueKind.Array)
-                throw new UpdateValidationException("Gitee Release 附件响应必须是数组。");
-
-            var assets = new List<ReleaseAsset>();
-            foreach (var element in document.RootElement.EnumerateArray())
-            {
-                if (element.ValueKind != JsonValueKind.Object)
-                    throw new UpdateValidationException("Gitee Release 附件条目无效。");
-                var name = ReadRequiredString(element, "name");
-                var uriText = ReadRequiredString(element, "browser_download_url");
-                if (!Uri.TryCreate(uriText, UriKind.Absolute, out var uri))
-                    throw new UpdateValidationException($"Release 附件 {name} 的下载地址无效。");
-                EnsureGiteeEntryUri(uri);
-                var size = element.TryGetProperty("size", out var sizeElement) && sizeElement.TryGetInt64(out var parsedSize)
-                    ? parsedSize
-                    : 0;
-                if (size < 0)
-                    throw new UpdateValidationException($"Release 附件 {name} 的大小无效。");
-                assets.Add(new ReleaseAsset(name, uri, size));
-            }
-            return assets;
-        }
-        catch (JsonException exception)
-        {
-            throw new UpdateValidationException("Gitee Release 附件响应不是有效的 JSON。", exception);
-        }
+        if (response.StatusCode == HttpStatusCode.Forbidden)
+            throw new HttpRequestException("Gitee 拒绝访问公开升级文件（HTTP 403），请稍后重试或检查当前网络。", null, response.StatusCode);
+        response.EnsureSuccessStatusCode();
     }
-
-    private static ReleaseAsset RequireUniqueAsset(IReadOnlyList<ReleaseAsset> assets, string name)
-    {
-        var matches = assets.Where(asset => string.Equals(asset.Name, name, StringComparison.Ordinal)).ToArray();
-        return matches.Length switch
-        {
-            1 => matches[0],
-            0 => throw new UpdateValidationException($"Release 缺少附件 {name}。"),
-            _ => throw new UpdateValidationException($"Release 包含多个同名附件 {name}。")
-        };
-    }
-
-    private Uri BuildApiUri(string suffix) =>
-        new($"https://gitee.com/api/v5/repos/{_options.Owner}/{_options.Repository}/{suffix}", UriKind.Absolute);
 
     private static void EnsureGiteeEntryUri(Uri uri)
     {
@@ -465,15 +396,6 @@ public sealed class GiteeUpdateService : IUpdateService
             throw new UpdateValidationException("升级包文件名不安全。");
     }
 
-    private static string ReadRequiredString(JsonElement element, string propertyName)
-    {
-        if (!element.TryGetProperty(propertyName, out var property)
-            || property.ValueKind != JsonValueKind.String
-            || string.IsNullOrWhiteSpace(property.GetString()))
-            throw new UpdateValidationException($"Gitee 响应缺少有效的 {propertyName}。");
-        return property.GetString()!;
-    }
-
     private static void EnsureHashMatches(ReadOnlySpan<byte> actualHash, string expectedHex)
     {
         if (!HashMatches(actualHash, expectedHex))
@@ -493,5 +415,4 @@ public sealed class GiteeUpdateService : IUpdateService
         }
     }
 
-    private sealed record ReleaseMetadata(long Id, string Tag, bool Prerelease);
 }

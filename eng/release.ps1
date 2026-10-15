@@ -51,8 +51,6 @@ else {
 $solutionPath = Join-Path $repositoryRoot 'FocusIR.Workbench.sln'
 $appProject = Join-Path $repositoryRoot 'tools\FocusIR.Workbench\src\FocusIR.Workbench.App\FocusIR.Workbench.App.csproj'
 $updaterProject = Join-Path $repositoryRoot 'tools\FocusIR.Workbench\src\FocusIR.Workbench.Updater\FocusIR.Workbench.Updater.csproj'
-$changelogPath = Join-Path $repositoryRoot 'CHANGELOG.md'
-$propsPath = Join-Path $repositoryRoot 'Directory.Build.props'
 if ([string]::IsNullOrWhiteSpace($OutputDirectory)) {
     $OutputDirectory = Join-Path $repositoryRoot 'artifacts\release'
 }
@@ -86,26 +84,43 @@ function Get-GitText {
     return ($output -join "`n").Trim()
 }
 
-function Get-ReleaseNotes {
+function Get-TagReleaseNotes {
     param(
-        [Parameter(Mandatory)][string]$Changelog,
-        [Parameter(Mandatory)][string]$Version
+        [Parameter(Mandatory)][string]$ReleaseTag,
+        [Parameter(Mandatory)][string]$SourceCommit
     )
 
-    $headerPattern = "(?m)^##\s+\[?$([regex]::Escape($Version))\]?(?:\s+-\s+\d{4}-\d{2}-\d{2})?\s*$"
-    $header = [regex]::Match($Changelog, $headerPattern)
-    if (-not $header.Success) {
-        throw "CHANGELOG.md 中缺少版本 $Version 的二级标题。"
+    $currentVersion = ConvertTo-SemanticVersion $ReleaseTag
+    $previousTag = $null
+    $previousVersion = $null
+    $tagText = Get-GitText -Arguments @('tag', '--merged', $ReleaseTag, '--list', 'v*')
+    foreach ($candidate in $tagText.Split("`n", [StringSplitOptions]::RemoveEmptyEntries)) {
+        $candidateVersion = ConvertTo-SemanticVersion $candidate
+        if ($null -ne $candidateVersion -and $candidateVersion -lt $currentVersion -and
+            ($null -eq $previousVersion -or $candidateVersion -gt $previousVersion)) {
+            $previousTag = $candidate
+            $previousVersion = $candidateVersion
+        }
     }
-
-    $contentStart = $header.Index + $header.Length
-    $nextHeader = [regex]::Match($Changelog.Substring($contentStart), '(?m)^##\s+')
-    $contentLength = if ($nextHeader.Success) { $nextHeader.Index } else { $Changelog.Length - $contentStart }
-    $notes = $Changelog.Substring($contentStart, $contentLength).Trim()
-    if ([string]::IsNullOrWhiteSpace($notes)) {
-        throw "CHANGELOG.md 中版本 $Version 的发布说明为空。"
+    $range = if ($previousTag) { "$previousTag..$ReleaseTag" } else { $ReleaseTag }
+    $commits = Get-GitText -Arguments @('log', '--reverse', '--no-merges', '--format=%h %s', $range, '--')
+    $lines = [Collections.Generic.List[string]]::new()
+    $lines.Add("# FocusIR Workbench $ReleaseTag")
+    $lines.Add('')
+    $lines.Add("源码提交：$SourceCommit")
+    if ($previousTag) { $lines.Add("对比标签：$previousTag") }
+    if ((Get-GitText -Arguments @('cat-file', '-t', "refs/tags/$ReleaseTag")) -ceq 'tag') {
+        $tagNote = Get-GitText -Arguments @('for-each-ref', '--format=%(contents:subject)', "refs/tags/$ReleaseTag")
+        if ($tagNote) { $lines.Add("标签说明：$tagNote") }
     }
-    return $notes
+    $lines.Add('')
+    $lines.Add('## 改动')
+    $lines.Add('')
+    foreach ($entry in $commits.Split("`n", [StringSplitOptions]::RemoveEmptyEntries)) { $lines.Add("- $entry") }
+    if ([string]::IsNullOrWhiteSpace($commits)) {
+        $lines.Add('- 此标签没有新增源码提交，版本按标签更新。')
+    }
+    return $lines -join "`n"
 }
 
 function ConvertTo-SemanticVersion {
@@ -433,11 +448,6 @@ try {
         throw "标签 $Tag 的提交不在 $masterRef 历史中。"
     }
 
-    [xml]$props = Get-Content -LiteralPath $propsPath -Raw -Encoding UTF8
-    $configuredVersion = [string]$props.Project.PropertyGroup.VersionPrefix
-    if ($configuredVersion -ne $versionText) {
-        throw "标签版本 $versionText 与 Directory.Build.props 的 VersionPrefix '$configuredVersion' 不一致。"
-    }
     # 发布包的默认升级查询仓必须与发布目标一致。
     $optionsSource = Get-Content -LiteralPath (Join-Path $repositoryRoot 'tools/FocusIR.Workbench/src/FocusIR.Workbench.Infrastructure/GiteeUpdateOptions.cs') -Raw
     $ownerMatch = [regex]::Match($optionsSource, 'public string Owner \{ get; init; \} = "([A-Za-z0-9_.-]+)";')
@@ -447,8 +457,7 @@ try {
         throw '源码中的默认升级查询仓与发布仓不一致。'
     }
 
-    $changelog = Get-Content -LiteralPath $changelogPath -Raw -Encoding UTF8
-    $releaseNotes = Get-ReleaseNotes -Changelog $changelog -Version $versionText
+    $releaseNotes = Get-TagReleaseNotes -ReleaseTag $Tag -SourceCommit $headCommit
 
     if (-not $SkipRemoteReleaseCheck) {
         $stableReleases = @(Get-GiteeStableReleases -RepositoryPath $Repository)
@@ -464,7 +473,7 @@ try {
         }
     }
 
-    & (Join-Path $repositoryRoot 'eng/ci.ps1') -SkipCleanCheck
+    & (Join-Path $PSScriptRoot 'ci.ps1') -SkipCleanCheck -SourceDirectory $repositoryRoot -VersionPrefix $versionText
     if (-not $?) {
         throw 'CI 脚本执行失败。'
     }
@@ -520,6 +529,7 @@ try {
 
     Copy-Item -Path (Join-Path $appPublishDirectory '*') -Destination $packageDirectory -Recurse -Force
     Copy-Item -Path (Join-Path $updaterPublishDirectory '*') -Destination $launcherDirectory -Recurse -Force
+    [IO.File]::WriteAllText((Join-Path $packageDirectory 'release-notes.md'), $releaseNotes, $utf8WithoutBom)
 
     $appExecutable = Join-Path $packageDirectory 'FocusIR.Workbench.exe'
     $updaterExecutable = Join-Path $launcherDirectory 'FocusIR.Workbench.Updater.exe'

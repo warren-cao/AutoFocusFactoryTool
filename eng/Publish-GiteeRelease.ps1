@@ -8,7 +8,7 @@ param(
     [ValidatePattern('^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+$')]
     [string]$Repository = $(if ($env:GITEE_REPOSITORY) { $env:GITEE_REPOSITORY } else { 'warren-cao/focusir-workbench-releases' }),
 
-    [ValidateSet('Publish', 'Validate', 'CheckRemote', 'Diagnose', 'VerifyExisting', 'FinalizeExisting')]
+    [ValidateSet('Publish', 'Validate', 'CheckRemote', 'Diagnose', 'VerifyExisting', 'FinalizeExisting', 'PublishFeed')]
     [string]$Mode = 'Publish',
 
     [string]$ArtifactDirectory,
@@ -275,18 +275,25 @@ function Assert-RemoteAttachments {
 }
 
 function Assert-RemoteArtifactDigests {
+    param([string[]]$Names = $expectedNames, [switch]$StaticFeed)
     # 仅用于显式收尾：不能凭四个相同长度的文件就把旧预发布提升为正式版。
     # 匿名下载并流式验哈希，不向 CDN 转发 Gitee Token，也不写入新的安装包。
     $downloadHandler = [Net.Http.HttpClientHandler]::new()
     $downloadHandler.AllowAutoRedirect = $false
     $downloadClient = [Net.Http.HttpClient]::new($downloadHandler)
     $downloadClient.Timeout = $client.Timeout
+    $downloadClient.DefaultRequestHeaders.CacheControl = [Net.Http.Headers.CacheControlHeaderValue]::new()
+    $downloadClient.DefaultRequestHeaders.CacheControl.NoCache = $true
     try {
-        foreach ($fileName in $expectedNames) {
+        foreach ($fileName in $Names) {
             $localPath = Join-Path $ArtifactDirectory $fileName
             $expectedLength = (Get-Item -LiteralPath $localPath).Length
             $expectedHash = (Get-FileHash -LiteralPath $localPath -Algorithm SHA256).Hash
-            $uri = [Uri]::new("https://gitee.com/$Repository/releases/download/$Tag/$fileName")
+            $uri = if ($StaticFeed) {
+                [Uri]::new("https://gitee.com/$Repository/raw/master/latest/$fileName")
+            } else {
+                [Uri]::new("https://gitee.com/$Repository/releases/download/$Tag/$fileName")
+            }
             $verified = $false
             for ($redirect = 0; $redirect -le 5; $redirect++) {
                 if ($uri.Scheme -cne 'https' -or $uri.Port -ne 443 -or $uri.UserInfo -or
@@ -327,6 +334,9 @@ function Assert-RemoteArtifactDigests {
     catch {
         $failure = Get-SafeExceptionDetails $_.Exception
         Write-ReleaseDiagnostic 'remote-artifact-verification-failed' @{ category = $failure.category; exceptions = $failure.exceptions }
+        if ($StaticFeed) {
+            throw '静态升级文件尚未与原始制品一致；入口提交可能已完成，请核对网络和缓存后单独重试 PublishFeed。'
+        }
         throw '远端附件复核失败；未转为正式版。请检查原始制品、网络、下载地址及日志，不要重新打包替换。'
     }
     finally { $downloadClient.Dispose() }
@@ -360,6 +370,166 @@ function Complete-GiteeRelease {
     Write-Host "Gitee 正式版发布成功：https://gitee.com/$Repository/releases/tag/$Tag"
 }
 
+function Read-SignedFeedVersion {
+    param([string]$Directory)
+    $manifestPath = Join-Path $Directory 'update-manifest.json'
+    $signaturePath = Join-Path $Directory 'update-manifest.sig'
+    $manifest = Get-Content -LiteralPath $manifestPath -Raw -Encoding UTF8 | ConvertFrom-Json
+    if ($manifest.schemaVersion -ne 1 -or $manifest.version -cnotmatch '^(0|[1-9]\d*)\.(0|[1-9]\d*)\.(0|[1-9]\d*)$' -or
+        $manifest.tag -cne "v$($manifest.version)" -or $manifest.keyId -cnotmatch '^[a-z0-9][a-z0-9-]{0,63}$') {
+        throw '现有静态升级清单的版本或密钥标识无效，拒绝更新入口。'
+    }
+    $publicKey = [Security.Cryptography.ECDsa]::Create()
+    try {
+        $publicKey.ImportFromPem((Get-Content -LiteralPath (Join-Path $repositoryRoot "eng/keys/$($manifest.keyId).pem") -Raw -Encoding UTF8))
+        $signature = [Convert]::FromBase64String((Get-Content -LiteralPath $signaturePath -Raw).Trim())
+        if ($publicKey.KeySize -ne 256 -or $signature.Length -ne 64 -or -not $publicKey.VerifyData(
+                [IO.File]::ReadAllBytes($manifestPath), $signature,
+                [Security.Cryptography.HashAlgorithmName]::SHA256,
+                [Security.Cryptography.DSASignatureFormat]::IeeeP1363FixedFieldConcatenation)) {
+            throw '现有静态升级入口验签失败，拒绝覆盖。'
+        }
+    }
+    finally { $publicKey.Dispose() }
+    return [version]$manifest.version
+}
+
+function Publish-SignedFeed {
+    $feedFiles = @('update-manifest.json', 'update-manifest.sig')
+    $feedManifest = Get-Content -LiteralPath (Join-Path $ArtifactDirectory 'update-manifest.json') -Raw -Encoding UTF8 | ConvertFrom-Json
+    $notesPath = "notes/$Tag.md"
+    $noteBytes = [Text.UTF8Encoding]::new($false).GetBytes([string]$feedManifest.releaseNotes)
+    $temporaryRoot = [IO.Path]::GetFullPath($(if ($env:RUNNER_TEMP) { $env:RUNNER_TEMP } else { [IO.Path]::GetTempPath() }))
+    $feedDirectory = Join-Path $temporaryRoot ('.focusir-feed-' + [guid]::NewGuid().ToString('N'))
+    $gitPath = (Get-Command git -ErrorAction Stop).Source
+    $login = $Repository.Split('/')[0]
+    $credential = [Convert]::ToBase64String([Text.Encoding]::UTF8.GetBytes("${login}:$env:GITEE_TOKEN"))
+
+    function Invoke-FeedGit {
+        param([string]$Operation, [string[]]$Arguments)
+        $start = [Diagnostics.ProcessStartInfo]::new($gitPath)
+        $start.UseShellExecute = $false
+        $start.CreateNoWindow = $true
+        $start.RedirectStandardOutput = $true
+        $start.RedirectStandardError = $true
+        foreach ($argument in $Arguments) { $start.ArgumentList.Add($argument) }
+        # 凭据仅放入子进程环境；不写入 URL、Git 配置文件、命令行或日志。
+        foreach ($name in @($start.Environment.Keys)) {
+            if ($name.StartsWith('GIT_TRACE', [StringComparison]::OrdinalIgnoreCase) -or
+                $name -in @('GIT_CURL_VERBOSE', 'GIT_CONFIG_PARAMETERS')) { $null = $start.Environment.Remove($name) }
+        }
+        $start.Environment['GIT_TERMINAL_PROMPT'] = '0'
+        $start.Environment['GIT_ASKPASS'] = ''
+        $start.Environment['GCM_INTERACTIVE'] = 'Never'
+        $start.Environment['GIT_CONFIG_COUNT'] = '5'
+        $start.Environment['GIT_CONFIG_KEY_0'] = 'http.https://gitee.com/.extraHeader'
+        $start.Environment['GIT_CONFIG_VALUE_0'] = "Authorization: Basic $credential"
+        $start.Environment['GIT_CONFIG_KEY_1'] = 'credential.helper'
+        $start.Environment['GIT_CONFIG_VALUE_1'] = ''
+        $start.Environment['GIT_CONFIG_KEY_2'] = 'core.hooksPath'
+        $start.Environment['GIT_CONFIG_VALUE_2'] = Join-Path $feedDirectory '.no-hooks'
+        $start.Environment['GIT_CONFIG_KEY_3'] = 'commit.gpgSign'
+        $start.Environment['GIT_CONFIG_VALUE_3'] = 'false'
+        $start.Environment['GIT_CONFIG_KEY_4'] = 'core.autocrlf'
+        $start.Environment['GIT_CONFIG_VALUE_4'] = 'false'
+        $process = [Diagnostics.Process]::new()
+        $process.StartInfo = $start
+        $started = $false
+        try {
+            $started = $process.Start()
+            if (-not $started) { throw '无法启动发布仓 Git 操作。' }
+            $stdout = $process.StandardOutput.ReadToEndAsync()
+            $stderr = $process.StandardError.ReadToEndAsync()
+            if (-not $process.WaitForExit([int]$client.Timeout.TotalMilliseconds)) {
+                throw "发布仓 Git 操作 $Operation 超时；若推送状态未知，请单独重试 PublishFeed。"
+            }
+            $output = $stdout.GetAwaiter().GetResult()
+            $null = $stderr.GetAwaiter().GetResult()
+            if ($process.ExitCode -ne 0) {
+                Write-ReleaseDiagnostic 'feed-git-failed' @{ operation = $Operation; exitCode = $process.ExitCode }
+                throw "发布仓 Git 操作 $Operation 失败；请检查 GITEE_TOKEN 的仓库代码读写权限及 master 分支权限。未强制推送或删除远端内容。"
+            }
+            return $output.Trim()
+        }
+        finally {
+            if ($started -and -not $process.HasExited) { $process.Kill($true); $process.WaitForExit() }
+            $process.Dispose()
+        }
+    }
+
+    try {
+        $null = Invoke-FeedGit -Operation clone -Arguments @('clone', '--depth', '1', '--single-branch', '--branch', 'master', '--no-tags', '--', "https://gitee.com/$Repository.git", $feedDirectory)
+        $latestDirectory = Join-Path $feedDirectory 'latest'
+        $existingManifest = Test-Path -LiteralPath (Join-Path $latestDirectory 'update-manifest.json') -PathType Leaf
+        $existingSignature = Test-Path -LiteralPath (Join-Path $latestDirectory 'update-manifest.sig') -PathType Leaf
+        if ($existingManifest -ne $existingSignature) { throw '现有静态入口缺少成对的清单或签名，拒绝覆盖。' }
+        $alreadyPublished = $false
+        if ($existingManifest) {
+            $existingVersion = Read-SignedFeedVersion -Directory $latestDirectory
+            if ($existingVersion -gt [version]$version) { throw '静态升级入口已有更高版本，拒绝回退。' }
+            if ($existingVersion -eq [version]$version) {
+                foreach ($name in $feedFiles) {
+                    if ((Get-FileHash -LiteralPath (Join-Path $latestDirectory $name) -Algorithm SHA256).Hash -cne
+                        (Get-FileHash -LiteralPath (Join-Path $ArtifactDirectory $name) -Algorithm SHA256).Hash) {
+                        throw '同版本静态入口与原始制品不一致，拒绝替换。'
+                    }
+                }
+                $alreadyPublished = $true
+            }
+        }
+        $archivePath = Join-Path $feedDirectory $notesPath
+        if (Test-Path -LiteralPath $archivePath -PathType Leaf) {
+            $existingNoteBytes = [IO.File]::ReadAllBytes($archivePath)
+            if ([Convert]::ToHexString([Security.Cryptography.SHA256]::HashData($existingNoteBytes)) -cne
+                [Convert]::ToHexString([Security.Cryptography.SHA256]::HashData($noteBytes))) {
+                throw '该标签的历史发布说明已存在且内容不同，拒绝覆盖。'
+            }
+        } else {
+            $alreadyPublished = $false
+        }
+        if (-not $alreadyPublished) {
+            $null = [IO.Directory]::CreateDirectory($latestDirectory)
+            $null = [IO.Directory]::CreateDirectory((Join-Path $feedDirectory 'notes'))
+            $null = [IO.Directory]::CreateDirectory((Join-Path $feedDirectory '.no-hooks'))
+            # 签名针对原始字节；本地属性禁止行尾转换或 clean filter。
+            $attributes = "`nlatest/update-manifest.json -text -filter -ident -working-tree-encoding`nlatest/update-manifest.sig -text -filter -ident -working-tree-encoding`n$notesPath -text -filter -ident -working-tree-encoding`n"
+            [IO.File]::AppendAllText((Join-Path $feedDirectory '.git/info/attributes'), $attributes, [Text.UTF8Encoding]::new($false))
+            foreach ($name in $feedFiles) { Copy-Item -LiteralPath (Join-Path $ArtifactDirectory $name) -Destination (Join-Path $latestDirectory $name) }
+            [IO.File]::WriteAllBytes($archivePath, $noteBytes)
+            $commitPaths = @('latest/update-manifest.json', 'latest/update-manifest.sig', $notesPath)
+            $null = Invoke-FeedGit -Operation stage -Arguments (@('-C', $feedDirectory, 'add', '--') + $commitPaths)
+            foreach ($path in $commitPaths) {
+                $rawHash = Invoke-FeedGit -Operation hash -Arguments @('-C', $feedDirectory, 'hash-object', '--no-filters', (Join-Path $feedDirectory $path))
+                $stagedHash = Invoke-FeedGit -Operation staged-hash -Arguments @('-C', $feedDirectory, 'rev-parse', ":$path")
+                if ($rawHash -cne $stagedHash) { throw '暂存改变了签名文件的原始字节，拒绝提交。' }
+            }
+            $null = Invoke-FeedGit -Operation commit -Arguments (@('-C', $feedDirectory, '-c', 'user.name=FocusIR Release', '-c', 'user.email=focusir-release@users.noreply.gitee.com', 'commit', '-m', "Update stable feed to $Tag", '--') + $commitPaths)
+            $null = Invoke-FeedGit -Operation push -Arguments @('-C', $feedDirectory, 'push', 'origin', 'HEAD:refs/heads/master')
+            Write-ReleaseDiagnostic 'feed-pushed' @{ tag = $Tag; branch = 'master'; files = $feedFiles }
+        }
+        for ($attempt = 0; $attempt -lt 3; $attempt++) {
+            try {
+                Assert-RemoteArtifactDigests -Names $feedFiles -StaticFeed
+                Write-Host "静态升级入口已发布并通过匿名字节校验：https://gitee.com/$Repository/raw/master/latest/update-manifest.json"
+                return
+            }
+            catch {
+                if ($attempt -eq 2) { throw }
+                Start-Sleep -Seconds 2
+            }
+        }
+    }
+    finally {
+        $credential = $null
+        $resolvedFeed = [IO.Path]::GetFullPath($feedDirectory)
+        if (Test-Path -LiteralPath $resolvedFeed) {
+            if (-not $resolvedFeed.StartsWith($temporaryRoot.TrimEnd([IO.Path]::DirectorySeparatorChar) + [IO.Path]::DirectorySeparatorChar, [StringComparison]::OrdinalIgnoreCase) -or
+                -not [IO.Path]::GetFileName($resolvedFeed).StartsWith('.focusir-feed-', [StringComparison]::Ordinal)) { throw '发布仓临时目录不在预期范围，拒绝清理。' }
+            Remove-Item -LiteralPath $resolvedFeed -Recurse -Force
+        }
+    }
+}
+
 try {
     # 源码只保存在 GitHub。Gitee 保留一个 README 提交即可承载 Release 标签。
     $repositoryInfo = Invoke-GiteeApi -Method GET -Path ''
@@ -375,6 +545,16 @@ try {
             }
         }
         Write-Host 'Gitee 只读诊断完成；没有创建、上传、修改或删除 Release。此检查不证明大文件上传一定成功。'
+        return
+    }
+    if ($Mode -eq 'PublishFeed') {
+        if ($null -eq $existing -or $existing.tag_name -cne $Tag -or [string]$existing.prerelease -ine 'false') {
+            throw '只有已正式发布的 Gitee Release 才能更新静态升级入口。'
+        }
+        $null = Assert-LocalArtifacts
+        Assert-RemoteAttachments -Id ([long]$existing.id)
+        Assert-RemoteArtifactDigests -Names @('update-manifest.json', 'update-manifest.sig')
+        Publish-SignedFeed
         return
     }
     if ($Mode -in @('FinalizeExisting', 'VerifyExisting')) {

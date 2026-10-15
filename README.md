@@ -13,7 +13,7 @@
 | `tools/FocusIR.Workbench/scripts/Start-Workbench.ps1` | 本机启动脚本 |
 | `contracts/v1/` | Socket v1 方法目录、JSON Schema 和消息示例 |
 | `eng/` | CI、正式发布、升级清单签名及静态校验脚本 |
-| `.github/workflows/` | 唯一的自托管手动发布工作流 |
+| `.github/workflows/` | 标签触发的自托管发布工作流 |
 | `CODE_MODULES.md` | 模块、关键代码与调用关系 |
 
 配套设备源码位于设备编译主机的 `zs_work/module/focusIR/`，其 `README.md` 与 `CODE_MODULES.md` 说明设备实现。上位机与设备端的 RPC 方法和字段应配套更新。
@@ -51,11 +51,15 @@ dotnet build .\FocusIR.Workbench.sln -c Release --no-restore
 
 ## 升级与自动发布
 
-源码仅保存在 GitHub（可以私有），公开二进制发布仓为 `warren-cao/focusir-workbench-releases`。唯一发布入口为 **FocusIR Release (Self-hosted)**，在自托管 `DESKTOP-AI3E9IB` 上手动运行，先发布 Gitee，再将相同签名附件发布到 GitHub；不向 Gitee 推送应用源码。工作流和配置见 [GitHub Actions 发布指南](eng/GITHUB_ACTIONS.md)。
+源码仅保存在 GitHub（可以私有），公开二进制发布仓为 `warren-cao/focusir-workbench-releases`。唯一发布工作流为 **FocusIR Release (Self-hosted)**，推送稳定版标签后在 `DESKTOP-AI3E9IB` 上自动运行，先发布 Gitee，再将相同签名附件发布到 GitHub，最后更新静态升级入口；不向 Gitee 推送应用源码。工作流和配置见 [GitHub Actions 发布指南](eng/GITHUB_ACTIONS.md)。
 
-客户端只查询新仓的 `releases/latest`，取得正式版的签名清单和升级包，不包含旧仓查询或回退逻辑。迁移已完成，源码中不再保留旧仓桥接打包或发布分支。
+客户端匿名读取新仓 `master` 分支下 `latest/update-manifest.json` 和 `latest/update-manifest.sig` 的公开原始文件，不再查询 Release API。清单验签通过后比较版本，升级包仍从清单指定的正式 Release 附件下载。Gitee 与 GitHub 发布完成后，工作流在一次 Git 提交中更新静态入口。
 
-应用版本统一配置在 `Directory.Build.props` 的 `VersionPrefix`。稳定版本使用 `v主版本.次版本.修订版本` 标签，并通过公开 Gitee Release 发布 `win-x64` 自包含 ZIP、升级清单、ECDSA 签名和 SHA-256 校验文件。
+`v0.3.1` 及更早版本仍使用 API；受限流影响的已安装工位需先从 Release 页面下载并人工安装一次 `v0.3.2` 或更新版本，之后使用固定文件入口检查更新。
+
+发布版本完全由 `v主版本.次版本.修订版本` 标签决定，构建时统一注入应用、程序集和更新器版本。`Directory.Build.props` 仅保留本地开发与依赖还原的默认版本，发版无需修改。锁文件只在项目依赖变化时更新，`CHANGELOG.md` 保留历史说明，不再作为发版必填项。
+
+发布说明自动记录上一个较低稳定标签到当前标签之间的 Git 提交，并附加当前附注标签的说明；内容写入签名清单供上位机展示、安装包中的 `release-notes.md`，以及公开发布仓的 `notes/vX.Y.Z.md` 历史文件。
 
 应用只在用户确认且设备已断开、没有活动任务或控制租约、没有未完成编辑/保存时启动安装。安装由独立更新器完成，使用 `%LocalAppData%\ThermEye\FocusIRWorkbench` 下的版本目录切换并保留上一版本；新版本未在规定时间内报告健康状态时自动回滚。升级过程不会主动停止电机或连接设备。
 
@@ -69,7 +73,7 @@ dotnet build .\FocusIR.Workbench.sln -c Release --no-restore
 
 未经过安装器部署的开发目录运行版本，应先完成上述安装。
 
-后续发版先更新 `Directory.Build.props`、`CHANGELOG.md` 和受影响的锁文件，提交到 `master`，创建并推送 `vX.Y.Z` 标签，再手动运行自托管工作流，分支选择 `master`、填写标签并勾选 `publish`。仅推送标签不会自动发布；完整步骤见 [`eng/GITHUB_ACTIONS.md`](eng/GITHUB_ACTIONS.md)。
+后续发版只需将代码提交并推送到 `master`，创建并推送新的 `vX.Y.Z` 标签，即自动发布；无需逐版修改版本文件、更新日志或锁文件。工作流仍保留从 `master` 手动执行的入口。完整步骤见 [`eng/GITHUB_ACTIONS.md`](eng/GITHUB_ACTIONS.md)。
 
 已发布标签和附件不覆盖。上传中断时保留原始签名制品，按发布指南使用当前上传脚本复核与恢复，不重新打包已发布版本。
 

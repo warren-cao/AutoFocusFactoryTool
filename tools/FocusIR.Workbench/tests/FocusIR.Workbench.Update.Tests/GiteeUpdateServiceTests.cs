@@ -34,28 +34,20 @@ public sealed class GiteeUpdateServiceTests
 
         Assert.AreEqual(UpdateCheckStatus.UpToDate, result.Status);
         Assert.IsNull(result.Release);
-        Assert.HasCount(1, fixture.Handler.RequestedUris);
+        Assert.HasCount(2, fixture.Handler.RequestedUris);
     }
 
     [TestMethod]
     public async Task CheckForUpdateAsync_RejectsPrerelease()
     {
-        using var fixture = new UpdateFixture(prerelease: true);
+        using var fixture = new UpdateFixture(manifestTransform: manifest => manifest with
+        {
+            Version = "0.2.0-beta",
+            Tag = "v0.2.0-beta"
+        });
 
-        var result = await fixture.Service.CheckForUpdateAsync(new SemanticVersion(0, 1, 0));
-
-        Assert.AreEqual(UpdateCheckStatus.NoStableRelease, result.Status);
-        Assert.IsNull(result.Release);
-    }
-
-    [TestMethod]
-    public async Task CheckForUpdateAsync_AcceptsGiteeStringFalsePrerelease()
-    {
-        using var fixture = new UpdateFixture(prerelease: "false");
-
-        var result = await fixture.Service.CheckForUpdateAsync(new SemanticVersion(0, 1, 0));
-
-        Assert.IsTrue(result.IsUpdateAvailable);
+        await Assert.ThrowsExactlyAsync<UpdateValidationException>(
+            () => fixture.Service.CheckForUpdateAsync(new SemanticVersion(0, 1, 0)));
     }
 
     [TestMethod]
@@ -193,18 +185,10 @@ public sealed class GiteeUpdateServiceTests
 
     private sealed class UpdateFixture : IDisposable
     {
-        private const string LatestUri =
-            "https://gitee.com/api/v5/repos/warren-cao/focusir-workbench-releases/releases/latest";
-        private const string AssetsUri =
-            "https://gitee.com/api/v5/repos/warren-cao/focusir-workbench-releases/releases/42/attach_files?page=1&per_page=100&direction=asc";
         private const string ManifestUri =
-            "https://gitee.com/warren-cao/focusir-workbench-releases/releases/download/v0.2.0/update-manifest.json";
+            "https://gitee.com/warren-cao/focusir-workbench-releases/raw/master/latest/update-manifest.json";
         private const string SignatureUri =
-            "https://gitee.com/warren-cao/focusir-workbench-releases/releases/download/v0.2.0/update-manifest.sig";
-        private const string ChecksumsUri =
-            "https://gitee.com/warren-cao/focusir-workbench-releases/releases/download/v0.2.0/SHA256SUMS.txt";
-        private const string DefaultPackageUri =
-            "https://gitee.com/warren-cao/focusir-workbench-releases/releases/download/v0.2.0/FocusIR.Workbench-v0.2.0-win-x64.zip";
+            "https://gitee.com/warren-cao/focusir-workbench-releases/raw/master/latest/update-manifest.sig";
 
         private readonly ECDsa _signingKey = ECDsa.Create(ECCurve.NamedCurves.nistP256);
         private readonly HttpClient _httpClient;
@@ -213,7 +197,6 @@ public sealed class GiteeUpdateServiceTests
             Func<UpdateManifest, UpdateManifest>? manifestTransform = null,
             bool tamperManifestAfterSigning = false,
             string? trustedPublicKeyOverride = null,
-            object? prerelease = null,
             string? packageResponseUri = null)
         {
             PackageBytes = Encoding.UTF8.GetBytes("package-data");
@@ -241,24 +224,8 @@ public sealed class GiteeUpdateServiceTests
             }
 
             PackageUri = new Uri(manifest.Package.Url, UriKind.Absolute);
-            var latestBytes = JsonSerializer.SerializeToUtf8Bytes(new Dictionary<string, object?>
-            {
-                ["id"] = 42,
-                ["tag_name"] = "v0.2.0",
-                ["prerelease"] = prerelease ?? false
-            });
-            var assetsBytes = JsonSerializer.SerializeToUtf8Bytes(new[]
-            {
-                Asset("update-manifest.json", ManifestUri, manifestBytes.Length),
-                Asset("update-manifest.sig", SignatureUri, Convert.ToBase64String(signature).Length),
-                Asset("SHA256SUMS.txt", ChecksumsUri, 128),
-                Asset(manifest.Package.FileName, manifest.Package.Url, manifest.Package.Size)
-            });
-
             Handler = new FakeHttpMessageHandler(new Dictionary<string, Func<HttpResponseMessage>>(StringComparer.Ordinal)
             {
-                [LatestUri] = () => Response(latestBytes, "application/json"),
-                [AssetsUri] = () => Response(assetsBytes, "application/json"),
                 [ManifestUri] = () => Response(manifestBytes, "application/json"),
                 [SignatureUri] = () => Response(Encoding.UTF8.GetBytes(Convert.ToBase64String(signature)), "text/plain"),
                 [manifest.Package.Url] = () => Response(PackageBytes, "application/zip", packageResponseUri)
@@ -284,13 +251,6 @@ public sealed class GiteeUpdateServiceTests
             _httpClient.Dispose();
             _signingKey.Dispose();
         }
-
-        private static Dictionary<string, object?> Asset(string name, string url, long size) => new()
-        {
-            ["name"] = name,
-            ["browser_download_url"] = url,
-            ["size"] = size
-        };
 
         private static HttpResponseMessage Response(byte[] content, string mediaType, string? responseUri = null)
         {
