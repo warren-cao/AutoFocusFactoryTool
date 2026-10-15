@@ -15,6 +15,7 @@ public sealed class GiteeUpdateService : IUpdateService
     private const string SignatureFileName = "update-manifest.sig";
     private const string GiteeHost = "gitee.com";
     private const string GiteeDownloadHost = "foruda.gitee.com";
+    private const string GiteeRawContentHost = "raw.giteeusercontent.com";
     private static readonly JsonSerializerOptions ManifestJsonOptions = new()
     {
         PropertyNameCaseInsensitive = false,
@@ -243,7 +244,8 @@ public sealed class GiteeUpdateService : IUpdateService
             .ConfigureAwait(false);
         try
         {
-            EnsureTrustedResponseUri(response.RequestMessage?.RequestUri ?? uri);
+            var isFeedRequest = uri == BuildFeedUri(ManifestFileName) || uri == BuildFeedUri(SignatureFileName);
+            EnsureTrustedResponseUri(response.RequestMessage?.RequestUri ?? uri, isFeedRequest);
             return response;
         }
         catch
@@ -375,16 +377,17 @@ public sealed class GiteeUpdateService : IUpdateService
             throw new UpdateValidationException("升级资源入口只允许使用 gitee.com 的标准 HTTPS 地址。");
     }
 
-    private static void EnsureTrustedResponseUri(Uri uri)
+    private static void EnsureTrustedResponseUri(Uri uri, bool allowRawContentHost)
     {
         var trustedHost = string.Equals(uri.IdnHost, GiteeHost, StringComparison.OrdinalIgnoreCase)
-            || string.Equals(uri.IdnHost, GiteeDownloadHost, StringComparison.OrdinalIgnoreCase);
+            || string.Equals(uri.IdnHost, GiteeDownloadHost, StringComparison.OrdinalIgnoreCase)
+            || (allowRawContentHost && string.Equals(uri.IdnHost, GiteeRawContentHost, StringComparison.OrdinalIgnoreCase));
         if (!uri.IsAbsoluteUri
             || !string.Equals(uri.Scheme, Uri.UriSchemeHttps, StringComparison.OrdinalIgnoreCase)
             || !trustedHost
             || !uri.IsDefaultPort
             || !string.IsNullOrEmpty(uri.UserInfo))
-            throw new UpdateValidationException("Gitee 将升级资源重定向到了不受信任的地址。");
+            throw new UpdateValidationException($"Gitee 将升级资源重定向到了不受信任的主机：{uri.IdnHost}。");
     }
 
     private static void EnsureSafeFileName(string fileName)

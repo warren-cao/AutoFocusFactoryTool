@@ -73,6 +73,8 @@ https://gitee.com/warren-cao/focusir-workbench-releases/raw/master/latest/update
 
 不再调用匿名 Release API。客户端验签后比较稳定版本，包地址必须指向当前仓对应标签的 Release 附件，下载时仍核对包大小及 SHA-256。两次读取恰逢入口更新而不匹配时，只有限重读一次，不绕过验签。入口尚未初始化返回没有可用稳定版。
 
+Gitee 的原始文件入口可能跳转到 `raw.giteeusercontent.com`。客户端与发布回读均只在静态清单/签名请求中允许这个精确 HTTPS 主机；安装包仍只允许 Gitee 的发布下载主机，不放开任意子域名。回读日志记录跳转前后主机、HTTP 状态、长度及摘要，不记录带临时签名的完整跳转 URL。
+
 `v0.3.1` 及更早的客户端仍查询 API，无法仅靠更新服务器文件改变自身代码。受 403 限流影响的工位需先从 Release 页面人工安装一次新客户端，之后使用固定入口。安装步骤见 [安装与验收](CICD_GUIDE.md)。
 
 ## 手动运行与故障处理
@@ -85,6 +87,7 @@ https://gitee.com/warren-cao/focusir-workbench-releases/raw/master/latest/update
 - Gitee 成功、GitHub 失败：下载原始四件套，通过 `Publish-GitHubRelease.ps1` 补发；有草稿时显式指定 `-ExistingReleaseId`。
 - Gitee 四个附件完整但仍预发布：使用原始四件套执行 `VerifyExisting` 和 `FinalizeExisting`，不重新构建或签名。
 - 两个平台成功、入口更新失败：检查令牌的 Git 代码读写权限、master 推送权限、网络和缓存。单独重试 `PublishFeed`，不重建已发布版本。
+- 已出现 `feed-pushed` 后回读失败：先查看 `remote-artifact-redirect` 及失败日志的 `stage`、`hostName`、`statusCode`、长度和摘要。`UntrustedRedirect` 是主机白名单问题，不能当作缓存错误处理。旧 `v0.3.2` 客户端未允许原始文件 CDN，需安装后续包含修复的版本。
 
 原始四件套放入 `artifacts/recovery/` 后，在已准备受控发布凭据的环境执行，例如恢复已完成正式发布的 `v0.3.2` 静态入口：
 

@@ -276,7 +276,7 @@ function Assert-RemoteAttachments {
 
 function Assert-RemoteArtifactDigests {
     param([string[]]$Names = $expectedNames, [switch]$StaticFeed)
-    # 仅用于显式收尾：不能凭四个相同长度的文件就把旧预发布提升为正式版。
+    # 正式附件恢复及静态入口均核对原始字节，不仅比较附件长度。
     # 匿名下载并流式验哈希，不向 CDN 转发 Gitee Token，也不写入新的安装包。
     $downloadHandler = [Net.Http.HttpClientHandler]::new()
     $downloadHandler.AllowAutoRedirect = $false
@@ -284,8 +284,25 @@ function Assert-RemoteArtifactDigests {
     $downloadClient.Timeout = $client.Timeout
     $downloadClient.DefaultRequestHeaders.CacheControl = [Net.Http.Headers.CacheControlHeaderValue]::new()
     $downloadClient.DefaultRequestHeaders.CacheControl.NoCache = $true
+    $trustedHosts = @('gitee.com', 'foruda.gitee.com')
+    if ($StaticFeed) { $trustedHosts += 'raw.giteeusercontent.com' }
+    $verificationStage = 'prepare-file'
+    $verificationHost = ''
+    $verificationStatus = $null
+    $verificationType = ''
+    $activeFileName = ''
+    $expectedLength = $null
+    $expectedHash = ''
+    $actualHash = ''
+    $total = $null
     try {
         foreach ($fileName in $Names) {
+            $activeFileName = $fileName
+            $verificationStage = 'prepare-file'
+            $verificationStatus = $null
+            $verificationType = ''
+            $actualHash = ''
+            $total = $null
             $localPath = Join-Path $ArtifactDirectory $fileName
             $expectedLength = (Get-Item -LiteralPath $localPath).Length
             $expectedHash = (Get-FileHash -LiteralPath $localPath -Algorithm SHA256).Hash
@@ -296,17 +313,29 @@ function Assert-RemoteArtifactDigests {
             }
             $verified = $false
             for ($redirect = 0; $redirect -le 5; $redirect++) {
+                $verificationStage = 'validate-download-address'
+                $verificationHost = $uri.IdnHost
                 if ($uri.Scheme -cne 'https' -or $uri.Port -ne 443 -or $uri.UserInfo -or
-                    $uri.IdnHost -notin @('gitee.com', 'foruda.gitee.com')) { throw '收尾下载被重定向到非受信任地址。' }
+                    $uri.IdnHost -notin $trustedHosts) { throw "公开文件下载被重定向到非受信任主机：$($uri.IdnHost)。" }
+                $verificationStage = 'send-request'
                 $response = $downloadClient.GetAsync($uri, [Net.Http.HttpCompletionOption]::ResponseHeadersRead).GetAwaiter().GetResult()
                 try {
                     $status = [int]$response.StatusCode
+                    $verificationStatus = $status
+                    $verificationType = if ($response.Content.Headers.ContentType) { $response.Content.Headers.ContentType.MediaType } else { '' }
+                    $verificationStage = 'http-status'
                     if ($status -in @(301, 302, 303, 307, 308)) {
                         if ($null -eq $response.Headers.Location) { throw '收尾下载缺少重定向地址。' }
-                        $uri = [Uri]::new($uri, $response.Headers.Location)
+                        $nextUri = [Uri]::new($uri, $response.Headers.Location)
+                        Write-ReleaseDiagnostic 'remote-artifact-redirect' @{
+                            fileName = $fileName; staticFeed = [bool]$StaticFeed; statusCode = $status
+                            fromHost = $uri.IdnHost; toHost = $nextUri.IdnHost
+                        }
+                        $uri = $nextUri
                         continue
                     }
                     if ($status -ne 200) { throw "收尾下载返回 HTTP $status。" }
+                    $verificationStage = 'read-content'
                     $hash = [Security.Cryptography.IncrementalHash]::CreateHash([Security.Cryptography.HashAlgorithmName]::SHA256)
                     $stream = $response.Content.ReadAsStreamAsync().GetAwaiter().GetResult()
                     $deadline = [Threading.CancellationTokenSource]::new($client.Timeout)
@@ -315,12 +344,18 @@ function Assert-RemoteArtifactDigests {
                         [long]$total = 0
                         while (($count = $stream.ReadAsync($buffer, 0, $buffer.Length, $deadline.Token).GetAwaiter().GetResult()) -ne 0) {
                             $total += $count
-                            if ($total -gt $expectedLength) { throw '远端附件超出已签名制品长度。' }
+                            if ($total -gt $expectedLength) {
+                                $verificationStage = 'content-length'
+                                throw '远端附件超出已签名制品长度。'
+                            }
                             $hash.AppendData($buffer, 0, $count)
                         }
                         $actualHash = [Convert]::ToHexString($hash.GetHashAndReset())
-                        if ($total -ne $expectedLength -or $actualHash -ine $expectedHash) { throw '远端附件内容与原始签名制品不一致。' }
-                        Write-ReleaseDiagnostic 'remote-artifact-verified' @{ fileName = $fileName; size = $total; sha256 = $actualHash }
+                        $verificationStage = 'content-length'
+                        if ($total -ne $expectedLength) { throw '远端附件长度与原始签名制品不一致。' }
+                        $verificationStage = 'digest'
+                        if ($actualHash -ine $expectedHash) { throw '远端附件内容与原始签名制品不一致。' }
+                        Write-ReleaseDiagnostic 'remote-artifact-verified' @{ fileName = $fileName; staticFeed = [bool]$StaticFeed; hostName = $uri.IdnHost; size = $total; sha256 = $actualHash }
                         $verified = $true
                     }
                     finally { $deadline.Dispose(); $stream.Dispose(); $hash.Dispose() }
@@ -328,14 +363,31 @@ function Assert-RemoteArtifactDigests {
                 finally { $response.Dispose() }
                 break
             }
-            if (-not $verified) { throw '收尾下载重定向次数过多。' }
+            if (-not $verified) {
+                $verificationStage = 'redirect-limit'
+                throw '公开文件下载重定向次数过多。'
+            }
         }
     }
     catch {
         $failure = Get-SafeExceptionDetails $_.Exception
-        Write-ReleaseDiagnostic 'remote-artifact-verification-failed' @{ category = $failure.category; exceptions = $failure.exceptions }
+        $category = switch ($verificationStage) {
+            'prepare-file' { 'LocalArtifactError' }
+            'validate-download-address' { 'UntrustedRedirect' }
+            'http-status' { 'HttpStatusError' }
+            'content-length' { 'LengthMismatch' }
+            'digest' { 'DigestMismatch' }
+            'redirect-limit' { 'RedirectLimit' }
+            default { $failure.category }
+        }
+        Write-ReleaseDiagnostic 'remote-artifact-verification-failed' @{
+            category = $category; stage = $verificationStage; fileName = $activeFileName; staticFeed = [bool]$StaticFeed
+            hostName = $verificationHost; statusCode = $verificationStatus; contentType = $verificationType
+            expectedSize = $expectedLength; actualSize = $total; expectedSha256 = $expectedHash; actualSha256 = $actualHash
+            exceptions = $failure.exceptions
+        }
         if ($StaticFeed) {
-            throw '静态升级文件尚未与原始制品一致；入口提交可能已完成，请核对网络和缓存后单独重试 PublishFeed。'
+            throw "静态入口回读校验失败（阶段=$verificationStage，主机=$verificationHost，HTTP=$verificationStatus）；入口可能已推送，请按分类日志排查后单独重试 PublishFeed，不要重建已发布版本。"
         }
         throw '远端附件复核失败；未转为正式版。请检查原始制品、网络、下载地址及日志，不要重新打包替换。'
     }
